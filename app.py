@@ -9,6 +9,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+from textwrap import dedent
 
 
 # ============================================================
@@ -766,28 +767,29 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+# ============================================================
+# HERO SECTION
+# ============================================================
+
 st.markdown(
-    """
-    <div class="hero">
-
-        <div class="hero-kicker">
-            Indonesian food price analysis
-        </div>
-
-        <div class="hero-title">
-            Pantau Harga. Pahami Prediksi.
-        </div>
-
-        <div class="hero-copy">
-            Dashboard analisis dan prediksi harga bahan pokok
-            menggunakan Machine Learning, dengan fokus pada
-            tiga komoditas penelitian dan seri provinsi yang
-            memenuhi kriteria seleksi.
-        </div>
-
+    dedent("""
+<div class="hero">
+    <div class="hero-kicker">
+        Indonesian Food Price Analysis
     </div>
-    """,
-    unsafe_allow_html=True,
+
+    <div class="hero-title">
+        Pantau Harga. Pahami Prediksi.
+    </div>
+
+    <div class="hero-copy">
+        Dashboard analisis dan prediksi harga bahan pokok
+        menggunakan Machine Learning untuk memahami pola
+        harga tiga komoditas utama di Indonesia.
+    </div>
+</div>
+    """),
+    unsafe_allow_html=True
 )
 
 show_historical_warning(metadata)
