@@ -771,23 +771,20 @@ st.markdown(
 # HERO SECTION
 # ============================================================
 
-st.markdown("""
+st.markdown(
+    """
 <div class="hero">
-    <div class="hero-kicker">
-        Indonesian Food Price Analysis
-    </div>
-
-    <div class="hero-title">
-        Pantau Harga. Pahami Prediksi.
-    </div>
-
-    <div class="hero-copy">
-        Dashboard analisis dan prediksi harga bahan pokok
-        menggunakan Machine Learning untuk memahami pola
-        harga tiga komoditas utama di Indonesia.
-    </div>
+<div class="hero-kicker">INDONESIAN FOOD PRICE ANALYSIS</div>
+<div class="hero-title">Pantau Harga. Pahami Prediksi.</div>
+<div class="hero-copy">
+Dashboard analisis dan prediksi harga bahan pokok
+menggunakan Machine Learning untuk memahami pola
+harga tiga komoditas utama di Indonesia.
 </div>
-""", unsafe_allow_html=True)
+</div>
+""",
+    unsafe_allow_html=True
+)
 
 
 show_historical_warning(metadata)
