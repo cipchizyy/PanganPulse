@@ -457,106 +457,416 @@ with st.sidebar:
 
 
 # ---------- Dashboard ----------
-if page == "Dashboard":
-    st.markdown(
-        """
-        <div class="hero">
-            <div class="hero-kicker">Indonesian food price analysis</div>
-            <div class="hero-title">Pantau Harga. Pahami Prediksi.</div>
-            <div class="hero-copy">
-                Dashboard analisis dan prediksi harga bahan pokok menggunakan
-                Machine Learning, dengan fokus pada tiga komoditas penelitian
-                dan seri provinsi yang memenuhi kriteria seleksi.
-            </div>
+st.markdown('<div id="dashboard"></div>', unsafe_allow_html=True)
+st.markdown(
+    """
+    <div class="hero">
+        <div class="hero-kicker">Indonesian food price analysis</div>
+        <div class="hero-title">Pantau Harga. Pahami Prediksi.</div>
+        <div class="hero-copy">
+            Dashboard analisis dan prediksi harga bahan pokok menggunakan
+            Machine Learning, dengan fokus pada tiga komoditas penelitian
+            dan seri provinsi yang memenuhi kriteria seleksi.
         </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    show_historical_warning(metadata)
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+show_historical_warning(metadata)
 
-    provinces_count = int(eligible["Province"].nunique())
-    commodities_count = int(eligible["Commodity"].nunique())
-    last_date = pd.Timestamp(metadata["latest_data_date"])
+provinces_count = int(eligible["Province"].nunique())
+commodities_count = int(eligible["Commodity"].nunique())
+last_date = pd.Timestamp(metadata["latest_data_date"])
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Komoditas", commodities_count)
-    c2.metric("Provinsi", provinces_count)
-    c3.metric("Seri tersedia", len(eligible))
-    c4.metric("Horizon prediksi", f"H+{metadata['horizon_days']}")
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Komoditas", commodities_count)
+c2.metric("Provinsi", provinces_count)
+c3.metric("Seri tersedia", len(eligible))
+c4.metric("Horizon prediksi", f"H+{metadata['horizon_days']}")
 
-    st.markdown("### Gambaran harga historis")
-    commodity_options = sorted(predictions["Commodity"].unique().tolist())
-    selected_commodity = st.selectbox(
-        "Pilih komoditas untuk melihat tren median antarprovinsi",
-        commodity_options,
-        key="dashboard_commodity",
+st.markdown("### Gambaran harga historis")
+commodity_options = sorted(predictions["Commodity"].unique().tolist())
+selected_commodity = st.selectbox(
+    "Pilih komoditas untuk melihat tren median antarprovinsi",
+    commodity_options,
+    key="dashboard_commodity",
+)
+
+selected_history = history[
+    history["Commodity"] == selected_commodity
+]
+median_history = (
+    selected_history.groupby("Date", as_index=False)["Price"]
+    .median()
+    .rename(columns={"Price": "Median harga antarprovinsi"})
+)
+
+fig = px.line(
+    median_history,
+    x="Date",
+    y="Median harga antarprovinsi",
+    markers=False,
+    title=f"Median harga historis — {selected_commodity}",
+)
+fig.update_traces(line_color="#287A55", line_width=2.5)
+fig.update_layout(
+    height=370,
+    margin=dict(l=10, r=10, t=55, b=10),
+    plot_bgcolor="white",
+    paper_bgcolor="white",
+    xaxis_title=None,
+    yaxis_title="Nilai harga (satuan dataset)",
+)
+fig.update_yaxes(gridcolor="#E9EFEA")
+st.plotly_chart(fig, use_container_width=True)
+
+st.markdown("### Ringkasan prediksi H+30")
+summary = (
+    predictions.groupby("Commodity")
+    .agg(
+        Seri_tersedia=("Province", "nunique"),
+        Median_harga_terakhir=("current_price", "median"),
+        Median_prediksi_H30=("Pred_Harga_H30", "median"),
+        Median_perubahan_persen=("Perubahan_Persen", "median"),
+    )
+    .reset_index()
+)
+display_summary = summary.copy()
+for col in [
+    "Median_harga_terakhir",
+    "Median_prediksi_H30",
+]:
+    display_summary[col] = display_summary[col].map(
+        lambda x: format_number(x, 1)
+    )
+display_summary["Median_perubahan_persen"] = (
+    display_summary["Median_perubahan_persen"]
+    .map(lambda x: f"{x:+.2f}%" if pd.notna(x) else "—")
+)
+display_summary = display_summary.rename(
+    columns={
+        "Commodity": "Komoditas",
+        "Seri_tersedia": "Jumlah provinsi",
+        "Median_harga_terakhir": "Median harga terakhir",
+        "Median_prediksi_H30": "Median prediksi H+30",
+        "Median_perubahan_persen": "Median perubahan",
+    }
+)
+st.dataframe(
+    display_summary,
+    use_container_width=True,
+    hide_index=True,
+)
+
+
+# ---------- Prediction page ----------
+st.markdown('<div id="prediksi"></div>', unsafe_allow_html=True)
+render_header(
+    "Prediksi Harga H+30",
+    "Pilih komoditas dan provinsi untuk melihat estimasi harga 30 hari setelah tanggal data terakhir.",
+)
+show_historical_warning(metadata)
+
+commodity_options = sorted(predictions["Commodity"].unique().tolist())
+commodity = st.selectbox(
+    "Komoditas",
+    commodity_options,
+    key="prediction_commodity",
+)
+province_options = sorted(
+    predictions.loc[
+        predictions["Commodity"] == commodity, "Province"
+    ].unique().tolist()
+)
+province = st.selectbox(
+    "Provinsi",
+    province_options,
+    key="prediction_province",
+)
+
+row = prediction_row(predictions, commodity, province)
+if row is None:
+    st.error("Seri komoditas-provinsi tidak tersedia pada data penelitian.")
+else:
+
+    st.markdown("### Hasil prediksi")
+    m1, m2, m3 = st.columns(3)
+    m1.metric(
+        "Harga terakhir",
+        format_number(row["current_price"]),
+        help="Harga pada tanggal pengamatan terakhir.",
+    )
+    m2.metric(
+        "Prediksi harga H+30",
+        format_number(row["Pred_Harga_H30"]),
+        delta=f"{row['Perubahan_Persen']:+.2f}% dari harga terakhir",
+        help="Estimasi harga tepat 30 hari setelah tanggal pengamatan.",
+    )
+    m3.metric(
+        "Klasifikasi perubahan",
+        row["Pred_Kelas_H30"],
+        help="Kategori berdasarkan perubahan harga H+30: Turun, Stabil, atau Naik.",
     )
 
-    selected_history = history[
-        history["Commodity"] == selected_commodity
-    ]
-    median_history = (
-        selected_history.groupby("Date", as_index=False)["Price"]
-        .median()
-        .rename(columns={"Price": "Median harga antarprovinsi"})
+    st.caption(
+        f"Tanggal pengamatan: **{format_date(row['Date'])}**  ·  "
+        f"Tanggal target: **{format_date(row['TargetDate'])}**"
     )
 
-    fig = px.line(
-        median_history,
-        x="Date",
-        y="Median harga antarprovinsi",
-        markers=False,
-        title=f"Median harga historis — {selected_commodity}",
-    )
-    fig.update_traces(line_color="#287A55", line_width=2.5)
-    fig.update_layout(
-        height=370,
-        margin=dict(l=10, r=10, t=55, b=10),
-        plot_bgcolor="white",
-        paper_bgcolor="white",
-        xaxis_title=None,
-        yaxis_title="Nilai harga (satuan dataset)",
-    )
-    fig.update_yaxes(gridcolor="#E9EFEA")
-    st.plotly_chart(fig, use_container_width=True)
-
-    st.markdown("### Ringkasan prediksi H+30")
-    summary = (
-        predictions.groupby("Commodity")
-        .agg(
-            Seri_tersedia=("Province", "nunique"),
-            Median_harga_terakhir=("current_price", "median"),
-            Median_prediksi_H30=("Pred_Harga_H30", "median"),
-            Median_perubahan_persen=("Perubahan_Persen", "median"),
-        )
-        .reset_index()
-    )
-    display_summary = summary.copy()
-    for col in [
-        "Median_harga_terakhir",
-        "Median_prediksi_H30",
-    ]:
-        display_summary[col] = display_summary[col].map(
-            lambda x: format_number(x, 1)
-        )
-    display_summary["Median_perubahan_persen"] = (
-        display_summary["Median_perubahan_persen"]
-        .map(lambda x: f"{x:+.2f}%" if pd.notna(x) else "—")
-    )
-    display_summary = display_summary.rename(
-        columns={
-            "Commodity": "Komoditas",
-            "Seri_tersedia": "Jumlah provinsi",
-            "Median_harga_terakhir": "Median harga terakhir",
-            "Median_prediksi_H30": "Median prediksi H+30",
-            "Median_perubahan_persen": "Median perubahan",
-        }
-    )
-    st.dataframe(
-        display_summary,
+    st.markdown("### Grafik harga historis dan titik prediksi")
+    st.plotly_chart(
+        make_history_chart(history, row),
         use_container_width=True,
-        hide_index=True,
     )
+    st.caption(
+        "Garis putus-putus hanya menghubungkan harga terakhir dengan titik target H+30. "
+        "Garis tersebut bukan prediksi harga harian di antara kedua tanggal."
+    )
+
+    probability_cols = [
+        col for col in predictions.columns if col.startswith("Prob_")
+    ]
+    if probability_cols:
+        st.markdown("### Probabilitas klasifikasi")
+        prob_values = []
+        for col in probability_cols:
+            label = col.replace("Prob_", "")
+            prob_values.append(
+                {"Kelas": label, "Probabilitas": float(row[col])}
+            )
+        prob_df = pd.DataFrame(prob_values)
+        fig_prob = px.bar(
+            prob_df,
+            x="Kelas",
+            y="Probabilitas",
+            text=prob_df["Probabilitas"].map(lambda x: f"{x:.1%}"),
+            color="Kelas",
+            color_discrete_map={
+                "Turun": "#D66B62",
+                "Stabil": "#8A9A8D",
+                "Naik": "#287A55",
+            },
+        )
+        fig_prob.update_layout(
+            showlegend=False,
+            height=280,
+            yaxis=dict(tickformat=".0%", range=[0, 1]),
+            margin=dict(l=10, r=10, t=20, b=10),
+            plot_bgcolor="white",
+            paper_bgcolor="white",
+        )
+        st.plotly_chart(fig_prob, use_container_width=True)
+
+    with st.expander("Lihat detail data seri"):
+        series_history = history[
+            (history["Commodity"] == commodity)
+            & (history["Province"] == province)
+        ].sort_values("Date", ascending=False)
+        st.dataframe(
+            series_history.rename(
+                columns={
+                    "Date": "Tanggal",
+                    "Commodity": "Komoditas",
+                    "Province": "Provinsi",
+                    "Price": "Harga",
+                }
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+
+# ---------- Province comparison ----------
+st.markdown('<div id="perbandingan"></div>', unsafe_allow_html=True)
+render_header(
+    "Perbandingan Antarprovinsi",
+    "Bandingkan harga terakhir dan estimasi harga H+30 untuk satu komoditas pada seluruh provinsi yang tersedia.",
+)
+show_historical_warning(metadata)
+
+commodity_options = sorted(predictions["Commodity"].unique().tolist())
+commodity = st.selectbox(
+    "Pilih komoditas",
+    commodity_options,
+    key="comparison_commodity",
+)
+
+comp = predictions[
+    predictions["Commodity"] == commodity
+].copy()
+
+sort_option = st.selectbox(
+    "Urutkan berdasarkan",
+    [
+        "Prediksi harga tertinggi",
+        "Prediksi harga terendah",
+        "Persentase kenaikan tertinggi",
+        "Persentase penurunan terbesar",
+        "Nama provinsi",
+    ],
+)
+
+if sort_option == "Prediksi harga tertinggi":
+    comp = comp.sort_values("Pred_Harga_H30", ascending=False)
+elif sort_option == "Prediksi harga terendah":
+    comp = comp.sort_values("Pred_Harga_H30", ascending=True)
+elif sort_option == "Persentase kenaikan tertinggi":
+    comp = comp.sort_values("Perubahan_Persen", ascending=False)
+elif sort_option == "Persentase penurunan terbesar":
+    comp = comp.sort_values("Perubahan_Persen", ascending=True)
+else:
+    comp = comp.sort_values("Province")
+
+table = comp[
+    [
+        "Province",
+        "current_price",
+        "Pred_Harga_H30",
+        "Perubahan_Persen",
+        "Pred_Kelas_H30",
+    ]
+].rename(
+    columns={
+        "Province": "Provinsi",
+        "current_price": "Harga terakhir",
+        "Pred_Harga_H30": "Prediksi H+30",
+        "Perubahan_Persen": "Perubahan (%)",
+        "Pred_Kelas_H30": "Klasifikasi",
+    }
+)
+
+st.markdown(f"### {commodity}")
+st.caption(f"{len(comp)} seri provinsi tersedia untuk komoditas ini.")
+
+fig = go.Figure()
+fig.add_trace(
+    go.Bar(
+        x=comp["Province"],
+        y=comp["current_price"],
+        name="Harga terakhir",
+        marker_color="#9CB7A4",
+    )
+)
+fig.add_trace(
+    go.Bar(
+        x=comp["Province"],
+        y=comp["Pred_Harga_H30"],
+        name="Prediksi H+30",
+        marker_color="#287A55",
+    )
+)
+fig.update_layout(
+    barmode="group",
+    height=440,
+    margin=dict(l=10, r=10, t=20, b=10),
+    xaxis_title=None,
+    yaxis_title="Nilai harga (satuan dataset)",
+    plot_bgcolor="white",
+    paper_bgcolor="white",
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+)
+fig.update_yaxes(gridcolor="#E9EFEA")
+st.plotly_chart(fig, use_container_width=True)
+
+st.markdown("### Tabel hasil")
+st.dataframe(
+    table.round({"Harga terakhir": 1, "Prediksi H+30": 1, "Perubahan (%)": 2}),
+    use_container_width=True,
+    hide_index=True,
+)
+
+csv_data = comp.to_csv(index=False).encode("utf-8-sig")
+st.download_button(
+    "⬇️ Unduh hasil perbandingan (CSV)",
+    data=csv_data,
+    file_name=f"panganpulse_{commodity.lower().replace(' ', '_')}_h30.csv",
+    mime="text/csv",
+)
+
+
+# ---------- About model ----------
+st.markdown('<div id="tentang"></div>', unsafe_allow_html=True)
+render_header(
+    "Tentang Model dan Penelitian",
+    "Informasi algoritma, metrik evaluasi, cakupan data, dan keterbatasan model yang digunakan.",
+)
+show_historical_warning(metadata)
+
+reg = metadata["regression"]
+cls = metadata["classification"]
+scope = metadata["scope"]
+
+st.markdown("### Model regresi")
+st.subheader(reg["candidate"])
+st.write(
+    f"Model dipilih berdasarkan **{reg['selection_rule']}**."
+)
+r1, r2, r3 = st.columns(3)
+r1.metric("Mean MAE", format_number(reg["validation_metrics"]["Mean_MAE"], 2))
+r2.metric("Mean RMSE", format_number(reg["validation_metrics"]["Mean_RMSE"], 2))
+r3.metric("Mean MAPE", f"{reg['validation_metrics']['Mean_MAPE']:.2f}%")
+
+st.markdown("### Model klasifikasi")
+st.subheader(cls["candidate"])
+st.write(
+    f"Model dipilih berdasarkan **{cls['selection_rule']}**."
+)
+c1, c2, c3 = st.columns(3)
+c1.metric("Accuracy", f"{cls['validation_metrics']['Mean_Accuracy']:.4f}")
+c2.metric("Macro F1", f"{cls['validation_metrics']['Mean_Macro_F1']:.4f}")
+c3.metric(
+    "Balanced Accuracy",
+    f"{cls['validation_metrics']['Mean_Balanced_Accuracy']:.4f}",
+)
+
+st.markdown("### Cakupan penelitian")
+a, b, c = st.columns(3)
+a.metric("Komoditas", len(scope["commodities"]))
+b.metric("Provinsi", int(eligible["Province"].nunique()))
+c.metric("Seri eligible", int(scope["n_eligible_series"]))
+
+st.write("**Komoditas yang dianalisis:**")
+st.write(", ".join(scope["commodities"]))
+
+with st.expander("Lihat fitur yang digunakan"):
+    st.write("**Fitur regresi:**")
+    st.code(", ".join(reg["features"]))
+    st.write("**Fitur klasifikasi:**")
+    st.code(", ".join(cls["features"]))
+
+with st.expander("Lihat konfigurasi model"):
+    st.write("**Konfigurasi regresi:**")
+    st.json(reg["params"])
+    st.write("**Konfigurasi klasifikasi:**")
+    st.json(cls["params"])
+
+st.markdown("### Metodologi evaluasi")
+validation = metadata["validation_design"]
+st.write(
+    f"Evaluasi menggunakan **{validation['folds'].__len__()} fold "
+    "expanding rolling-origin**. Periode validasi berlangsung Januari–Mei 2024."
+)
+st.write(
+    f"Jumlah baris training final: **{metadata['training_data']['rows']:,}**."
+)
+
+st.markdown("### Keterbatasan")
+for limitation in metadata.get("limitations", []):
+    st.markdown(f"- {limitation}")
+
+st.info(
+    "Angka performa di atas merupakan hasil validasi rolling-origin yang "
+    "juga digunakan selama proses pemilihan model. Angka tersebut bukan "
+    "hasil pengujian pada holdout independen."
+)
+
+
+# ---------- Footer ----------
+st.divider()
+st.caption(
+    "PanganPulse · Academic Machine Learning Project · "
+    "Prediksi historis H+30 · Sumber dan satuan mengikuti dataset penelitian."
+)
 
 
 # ---------- Prediction page ----------
