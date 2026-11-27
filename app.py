@@ -28,93 +28,158 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+st.markdown("""
+<div class="hero-box" id="dashboard">
+    <div class="hero-title">Pantau Harga, Pahami Prediksi</div>
+    <div class="hero-subtitle">
+        Dashboard analisis dan prediksi harga bahan pokok berbasis Machine Learning
+        untuk membantu memahami pola harga 3 komoditas utama di Indonesia.
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
 # ---------- Styling ----------
-st.markdown(
-    """
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap');
+st.markdown("""
+<style>
+    html {
+        scroll-behavior: smooth;
+    }
 
-    html, body, [class*="css"] {
-        font-family: 'DM Sans', sans-serif;
+    body, .stApp {
+        background: linear-gradient(180deg, #FFFDF8 0%, #F6F1E7 100%);
+        color: #2B2B2B;
+        font-family: 'Segoe UI', sans-serif;
     }
-    h1, h2, h3 {
-        font-family: 'Manrope', sans-serif;
-        letter-spacing: -0.025em;
-    }
+
     .block-container {
-        padding-top: 1.6rem;
-        padding-bottom: 2.5rem;
-        max-width: 1440px;
+        padding-top: 1.5rem;
+        padding-bottom: 3rem;
+        max-width: 1250px;
     }
-    [data-testid="stSidebar"] {
-        background: #F3F7F3;
-        border-right: 1px solid #E1EAE2;
+
+    section[data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #F2EBDD 0%, #EAE2D2 100%);
+        border-right: 1px solid #DDD2BC;
     }
-    .brand {
-        font-family: 'Manrope', sans-serif;
-        font-weight: 800;
-        font-size: 1.55rem;
-        color: #174B3A;
-        margin-bottom: 0;
+
+    section[data-testid="stSidebar"] .stMarkdown h1,
+    section[data-testid="stSidebar"] .stMarkdown h2,
+    section[data-testid="stSidebar"] .stMarkdown h3,
+    section[data-testid="stSidebar"] .stMarkdown p {
+        color: #2F5D50;
     }
-    .brand-sub {
-        color: #6B7D70;
-        font-size: .78rem;
-        margin-top: -.25rem;
-    }
-    .hero {
-        background: linear-gradient(120deg, #174B3A 0%, #28664D 100%);
+
+    .hero-box {
+        background: linear-gradient(135deg, #2F5D50 0%, #4D7A67 100%);
+        padding: 2.2rem;
+        border-radius: 28px;
         color: white;
-        padding: 1.55rem 1.7rem;
-        border-radius: 18px;
-        margin-bottom: 1.1rem;
+        box-shadow: 0 10px 30px rgba(47, 93, 80, 0.18);
+        margin-bottom: 1.5rem;
     }
-    .hero-kicker {
-        text-transform: uppercase;
-        letter-spacing: .11em;
-        font-size: .72rem;
-        font-weight: 700;
-        color: #C8E0D0;
-    }
+
     .hero-title {
-        font-family: 'Manrope', sans-serif;
-        font-weight: 800;
-        font-size: clamp(1.7rem, 3vw, 2.45rem);
-        line-height: 1.15;
-        margin: .4rem 0;
-    }
-    .hero-copy {
-        color: #E1EEE5;
-        font-size: .95rem;
-        max-width: 760px;
-    }
-    .section-label {
-        color: #648071;
-        font-size: .76rem;
+        font-size: 2.3rem;
         font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: .08em;
+        margin-bottom: 0.4rem;
     }
-    .small-muted {
-        color: #738176;
-        font-size: .82rem;
+
+    .hero-subtitle {
+        font-size: 1rem;
+        opacity: 0.92;
     }
-    .stMetric {
-        background: #F5F8F5;
-        border: 1px solid #E4ECE5;
+
+    .custom-card {
+        background: #FFFDF8;
+        padding: 1.2rem 1.2rem;
+        border-radius: 22px;
+        border: 1px solid #E7DDCC;
+        box-shadow: 0 6px 20px rgba(80, 80, 80, 0.05);
+        margin-bottom: 1rem;
+    }
+
+    .section-title {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: #2F5D50;
+        margin-top: 1.5rem;
+        margin-bottom: 0.3rem;
+    }
+
+    .section-subtitle {
+        color: #6A6A6A;
+        margin-bottom: 1.2rem;
+    }
+
+    div[data-testid="stMetric"] {
+        background: #FFFDF8;
+        border: 1px solid #E7DDCC;
+        padding: 14px;
+        border-radius: 20px;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.04);
+    }
+
+    .stButton > button {
+        background: linear-gradient(135deg, #2F5D50 0%, #567C6B 100%);
+        color: white;
+        border: none;
         border-radius: 14px;
-        padding: 12px 14px;
+        padding: 0.6rem 1.2rem;
+        font-weight: 600;
+        transition: all 0.25s ease;
     }
+
+    .stButton > button:hover {
+        background: linear-gradient(135deg, #25483E 0%, #476B5C 100%);
+        transform: translateY(-1px);
+        box-shadow: 0 8px 18px rgba(47, 93, 80, 0.18);
+    }
+
+    .stDownloadButton > button {
+        background: #D6B98C;
+        color: #2F2F2F;
+        border: none;
+        border-radius: 14px;
+        font-weight: 600;
+    }
+
+    .stDownloadButton > button:hover {
+        background: #CBAE7F;
+        color: #1F1F1F;
+    }
+
+    .stSelectbox > div > div,
+    .stTextInput > div > div,
+    .stNumberInput > div > div {
+        border-radius: 14px !important;
+        border: 1px solid #D8CCB8 !important;
+        background-color: #FFFDF8 !important;
+    }
+
     div[data-testid="stDataFrame"] {
-        border: 1px solid #E5ECE6;
-        border-radius: 12px;
+        border-radius: 18px;
         overflow: hidden;
+        border: 1px solid #E7DDCC;
+        background: #FFFDF8;
     }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+
+    .sidebar-link {
+        display: block;
+        padding: 10px 14px;
+        margin-bottom: 8px;
+        border-radius: 14px;
+        text-decoration: none;
+        background: rgba(47,93,80,0.08);
+        color: #2F5D50 !important;
+        font-weight: 600;
+    }
+
+    .sidebar-link:hover {
+        background: rgba(47,93,80,0.16);
+    }
+
+</style>
+""", unsafe_allow_html=True)
 
 
 # ---------- Helpers ----------
@@ -375,33 +440,20 @@ except Exception as exc:
 
 # ---------- Sidebar ----------
 with st.sidebar:
-    st.markdown(
-        '<div class="brand">🌾 PanganPulse</div>'
-        '<div class="brand-sub">Food Price Forecasting Dashboard</div>',
-        unsafe_allow_html=True,
-    )
-    st.divider()
-    page = st.radio(
-        "NAVIGASI",
-        [
-            "Dashboard",
-            "Prediksi H+30",
-            "Perbandingan Provinsi",
-            "Tentang Model",
-        ],
-        label_visibility="visible",
-    )
-    st.divider()
-    st.caption("RUANG LINGKUP PENELITIAN")
-    st.markdown("**3 komoditas**")
-    st.markdown("**34 provinsi**")
-    st.markdown(f"**{len(predictions)} seri eligible**")
-    st.divider()
-    st.caption("Periode data terakhir")
-    st.markdown(
-        f"**{format_date(metadata['latest_data_date'])}**"
-    )
-    st.caption("Academic project · Machine Learning")
+    st.markdown("## 🌾 PanganPulse")
+    st.caption("Food Price Forecasting Dashboard")
+    st.markdown("---")
+
+    st.markdown('<a class="sidebar-link" href="#dashboard">🏠 Dashboard</a>', unsafe_allow_html=True)
+    st.markdown('<a class="sidebar-link" href="#prediksi">📈 Prediksi H+30</a>', unsafe_allow_html=True)
+    st.markdown('<a class="sidebar-link" href="#perbandingan">📊 Perbandingan Provinsi</a>', unsafe_allow_html=True)
+    st.markdown('<a class="sidebar-link" href="#tentang">ℹ️ Tentang Model</a>', unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown("### Ringkasan")
+    st.markdown("- 3 komoditas")
+    st.markdown("- 34 provinsi")
+    st.markdown("- Horizon H+30")
 
 
 # ---------- Dashboard ----------
