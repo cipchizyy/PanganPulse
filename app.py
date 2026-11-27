@@ -1,5 +1,7 @@
+
 from __future__ import annotations
 
+import html
 import json
 from pathlib import Path
 
@@ -9,18 +11,30 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-from textwrap import dedent
 
 
 # ============================================================
-# PanganPulse — Food Price Forecasting Dashboard
-# Forecast horizon: H+30
-# Regression: LightGBM A
+# PANGANPULSE
+# Food Price Forecasting Dashboard
+# Regression    : LightGBM A
 # Classification: Logistic Regression
+# Forecast      : H+30
 # ============================================================
+
 
 BASE_DIR = Path(__file__).resolve().parent
 ARTIFACT_DIR = BASE_DIR / "artifacts"
+
+BG = "#F7F2E8"
+SURFACE = "#FFFDF8"
+GREEN = "#315C49"
+GREEN_LIGHT = "#4F8068"
+SAGE = "#E6EEE5"
+GOLD = "#D8BD8D"
+TEXT = "#29372F"
+MUTED = "#718076"
+BORDER = "#E7DECF"
+
 
 st.set_page_config(
     page_title="PanganPulse | Prediksi Harga Pangan",
@@ -31,308 +45,595 @@ st.set_page_config(
 
 
 # ============================================================
-# STYLING
+# 1. GLOBAL CSS
 # ============================================================
 
 st.markdown("""
 <style>
-    html, body, section.main, [data-testid="stAppViewContainer"] {
-        scroll-behavior: smooth;
-        scroll-padding-top: 1.25rem;
-    }
 
-    body, .stApp, [data-testid="stAppViewContainer"] {
-        background: #FAF7EF;
-        color: #2B332D;
-        font-family: 'Segoe UI', sans-serif;
-    }
+:root {
+    color-scheme: light;
+    --bg: #F7F2E8;
+    --surface: #FFFDF8;
+    --green: #315C49;
+    --green-light: #4F8068;
+    --sage: #E6EEE5;
+    --gold: #D8BD8D;
+    --text: #29372F;
+    --muted: #718076;
+    --border: #E7DECF;
+}
 
-    header[data-testid="stHeader"] {
-        background: rgba(250, 247, 239, 0.92);
-    }
+html {
+    scroll-behavior: smooth;
+    scroll-padding-top: 20px;
+}
 
-    [data-testid="stToolbar"] {
-        right: 1rem;
-    }
+body, .stApp,
+[data-testid="stAppViewContainer"],
+[data-testid="stMain"] {
+    background: var(--bg) !important;
+    color: var(--text) !important;
+    font-family: "Segoe UI", sans-serif;
+}
 
-    .block-container {
-        padding-top: 1.5rem;
-        padding-bottom: 3rem;
-        max-width: 1250px;
-    }
+[data-testid="stMainBlockContainer"] {
+    max-width: 1280px;
+    padding-top: 1.7rem;
+    padding-bottom: 4rem;
+}
 
-    section[data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #F2EBDD 0%, #EAE2D2 100%);
-        border-right: 1px solid #DDD2BC;
-    }
+header[data-testid="stHeader"] {
+    background: rgba(247,242,232,0.95);
+}
 
-    section[data-testid="stSidebar"] > div {
-        padding-top: 1.5rem;
-    }
+[data-testid="stMarkdownContainer"] p,
+[data-testid="stMarkdownContainer"] li {
+    color: var(--text);
+}
 
-    section[data-testid="stSidebar"] .stMarkdown h1,
-    section[data-testid="stSidebar"] .stMarkdown h2,
-    section[data-testid="stSidebar"] .stMarkdown h3,
-    section[data-testid="stSidebar"] .stMarkdown p {
-        color: #2F5D50;
-    }
+[data-testid="stMarkdownContainer"] h1,
+[data-testid="stMarkdownContainer"] h2,
+[data-testid="stMarkdownContainer"] h3 {
+    color: var(--green) !important;
+    font-weight: 750;
+    letter-spacing: -0.025em;
+}
 
+[data-testid="stCaptionContainer"] {
+    color: var(--muted) !important;
+}
+
+/* SIDEBAR */
+
+section[data-testid="stSidebar"] {
+    background: linear-gradient(
+        180deg,
+        #F1EBDD 0%,
+        #EAE3D4 100%
+    ) !important;
+
+    border-right: 1px solid var(--border);
+}
+
+section[data-testid="stSidebar"] > div {
+    padding: 1.5rem 1.15rem;
+}
+
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h1,
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h2,
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3 {
+    color: var(--green) !important;
+}
+
+.sidebar-brand {
+    font-size: 1.55rem;
+    font-weight: 800;
+    color: var(--green);
+    letter-spacing: -0.04em;
+}
+
+.sidebar-description {
+    font-size: 0.82rem;
+    color: #788A7C;
+    margin-top: 5px;
+}
+
+.sidebar-link {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 15px 17px;
+    margin-bottom: 11px;
+    border-radius: 17px;
+    background: rgba(49,92,73,0.075);
+    border: 1px solid rgba(49,92,73,0.06);
+    color: #315C49 !important;
+    text-decoration: none !important;
+    font-size: 0.94rem;
+    font-weight: 700;
+    transition: all 0.22s ease;
+}
+
+.sidebar-link:hover {
+    background: #DDE9DD;
+    border-color: #C6D8C7;
+    transform: translateX(4px);
+    box-shadow: 0 7px 16px rgba(49,92,73,0.08);
+}
+
+/* HERO */
+
+.hero {
+    position: relative;
+    overflow: hidden;
+    padding: 3rem 2.8rem;
+    border-radius: 30px;
+    background: linear-gradient(
+        125deg,
+        #254E3D 0%,
+        #376D55 55%,
+        #59866F 100%
+    );
+    box-shadow: 0 18px 40px rgba(49,92,73,0.15);
+    margin-bottom: 1.5rem;
+}
+
+.hero::after {
+    content: "";
+    position: absolute;
+    width: 270px;
+    height: 270px;
+    right: -75px;
+    top: -105px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.08);
+}
+
+.hero-kicker {
+    display: inline-block;
+    background: rgba(255,255,255,0.14);
+    color: #F1DFB9;
+    border-radius: 30px;
+    padding: 8px 14px;
+    font-size: 0.72rem;
+    letter-spacing: 0.13em;
+    font-weight: 750;
+    margin-bottom: 1.2rem;
+}
+
+.hero-title {
+    position: relative;
+    z-index: 1;
+    color: #FFFDF8;
+    font-size: clamp(2rem, 4vw, 3.2rem);
+    font-weight: 850;
+    line-height: 1.13;
+    letter-spacing: -0.045em;
+    margin-bottom: 1rem;
+}
+
+.hero-copy {
+    position: relative;
+    z-index: 1;
+    max-width: 720px;
+    color: #E8F0E8;
+    font-size: 1.04rem;
+    line-height: 1.8;
+}
+
+/* SECTION */
+
+.section-title {
+    color: var(--green);
+    font-size: 1.7rem;
+    font-weight: 800;
+    letter-spacing: -0.035em;
+    margin-top: 1.3rem;
+    margin-bottom: 0.3rem;
+}
+
+.section-subtitle {
+    color: var(--muted);
+    font-size: 0.94rem;
+    line-height: 1.65;
+    margin-bottom: 1.2rem;
+}
+
+.section-anchor {
+    scroll-margin-top: 20px;
+}
+
+/* METRIC CARDS */
+
+[data-testid="stMetric"] {
+    background: linear-gradient(
+        145deg,
+        #FFFDF8 0%,
+        #F8F3E9 100%
+    ) !important;
+
+    border: 1px solid var(--border) !important;
+    border-radius: 22px !important;
+    padding: 19px 17px !important;
+    min-height: 115px;
+    box-shadow: 0 6px 20px rgba(48,65,50,0.055);
+}
+
+[data-testid="stMetricLabel"] {
+    color: #738176 !important;
+    font-size: 0.87rem !important;
+    font-weight: 650 !important;
+}
+
+[data-testid="stMetricValue"] {
+    color: var(--green) !important;
+    font-size: 1.8rem !important;
+    font-weight: 800 !important;
+}
+
+[data-testid="stMetricDelta"] {
+    font-weight: 650 !important;
+}
+
+/* CHART */
+
+[data-testid="stPlotlyChart"] {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 22px;
+    padding: 9px;
+    box-shadow: 0 6px 20px rgba(48,65,50,0.045);
+}
+
+/* TABLE */
+
+.table-shell {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    overflow: auto;
+    box-shadow: 0 6px 20px rgba(48,65,50,0.045);
+    margin: 10px 0 20px 0;
+}
+
+.pretty-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 0.91rem;
+}
+
+.pretty-table thead th {
+    position: sticky;
+    top: 0;
+    background: #315C49;
+    color: #FFFFFF;
+    text-align: left;
+    padding: 15px 16px;
+    font-weight: 750;
+    white-space: nowrap;
+    border-bottom: 2px solid #49765E;
+}
+
+.pretty-table tbody td {
+    color: #344239;
+    padding: 13px 16px;
+    border-bottom: 1px solid #EEE7DA;
+    white-space: nowrap;
+    background: #FFFDF8;
+}
+
+.pretty-table tbody tr:nth-child(even) td {
+    background: #F7F4EB;
+}
+
+.pretty-table tbody tr:hover td {
+    background: #EAF0E7;
+}
+
+.pretty-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+/* STATUS BADGES */
+
+.status-badge {
+    display: inline-block;
+    padding: 5px 12px;
+    border-radius: 30px;
+    font-size: 0.81rem;
+    font-weight: 750;
+}
+
+.badge-up {
+    background: #E1EFE4;
+    color: #286443;
+}
+
+.badge-down {
+    background: #F7E4E0;
+    color: #A14E45;
+}
+
+.badge-stable {
+    background: #ECEDE7;
+    color: #667264;
+}
+
+/* INFO NOTE */
+
+.info-note {
+    padding: 17px 20px;
+    background: #F4E9D2;
+    border: 1px solid #E6D5B0;
+    border-radius: 18px;
+    color: #594A32;
+    line-height: 1.75;
+    margin-bottom: 20px;
+}
+
+/* INPUTS */
+
+[data-baseweb="select"] > div,
+[data-baseweb="input"] > div {
+    background: #FFFDF8 !important;
+    border-color: #DCD2C1 !important;
+    border-radius: 14px !important;
+}
+
+[data-baseweb="select"] span,
+[data-baseweb="input"] input {
+    color: #29372F !important;
+}
+
+/* BUTTONS */
+
+.stButton > button,
+.stDownloadButton > button {
+    border-radius: 14px !important;
+    border: none !important;
+    padding: 0.65rem 1.2rem !important;
+    font-weight: 700 !important;
+    transition: all 0.2s ease;
+}
+
+.stButton > button {
+    background: linear-gradient(
+        135deg,
+        #315C49,
+        #4F8068
+    ) !important;
+    color: white !important;
+}
+
+.stDownloadButton > button {
+    background: #D8BD8D !important;
+    color: #3C392F !important;
+}
+
+.stButton > button:hover,
+.stDownloadButton > button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 18px rgba(49,92,73,0.16);
+}
+
+/* EXPANDER */
+
+[data-testid="stExpander"] {
+    background: #FFFDF8 !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 17px !important;
+}
+
+/* ALERT */
+
+[data-testid="stAlert"] {
+    border-radius: 17px;
+}
+
+/* DIVIDER */
+
+hr {
+    border-color: #E5DCCB !important;
+    margin-top: 2rem !important;
+    margin-bottom: 2rem !important;
+}
+
+/* FOOTER */
+
+.footer {
+    text-align: center;
+    color: #7D887E;
+    font-size: 0.82rem;
+    padding: 20px;
+}
+
+@media(max-width:768px) {
     .hero {
-        background: linear-gradient(135deg, #285747 0%, #4D7A67 100%);
-        padding: 2.4rem 2.5rem;
-        border-radius: 30px 30px 30px 10px;
-        color: #FFFDF8;
-        box-shadow: 0 14px 34px rgba(47, 93, 80, 0.16);
-        margin: 0.4rem 0 1.6rem 0;
-        position: relative;
-        overflow: hidden;
-    }
-
-    .hero::after {
-        content: "";
-        position: absolute;
-        width: 220px;
-        height: 220px;
-        right: -65px;
-        top: -90px;
-        border-radius: 50%;
-        background: rgba(255,255,255,0.07);
-    }
-
-    .hero-kicker {
-        color: #E7D8B9;
-        font-size: 0.75rem;
-        font-weight: 700;
-        letter-spacing: 0.14em;
-        text-transform: uppercase;
-        margin-bottom: 0.7rem;
+        padding: 1.8rem;
+        border-radius: 23px;
     }
 
     .hero-title {
-        font-size: clamp(1.8rem, 3vw, 2.6rem);
-        line-height: 1.15;
-        font-weight: 750;
-        margin-bottom: 0.75rem;
-        color: #FFFDF8;
-    }
-
-    .hero-copy {
-        max-width: 760px;
-        font-size: 1.02rem;
-        line-height: 1.7;
-        color: rgba(255,253,248,0.9);
-    }
-
-    .hero-subtitle {
-        font-size: 1rem;
-        opacity: 0.92;
-    }
-
-    .custom-card {
-        background: #FFFDF8;
-        padding: 1.2rem 1.2rem;
-        border-radius: 22px;
-        border: 1px solid #E7DDCC;
-        box-shadow: 0 6px 20px rgba(80, 80, 80, 0.05);
-        margin-bottom: 1rem;
-    }
-
-    div[data-testid="stMetric"] {
-        min-height: 112px;
-    }
-
-    div[data-testid="stMetric"] label {
-        color: #66746B;
-        font-weight: 600;
-    }
-
-    div[data-testid="stMetric"] [data-testid="stMetricValue"] {
-        color: #285747;
-        font-weight: 750;
-    }
-
-    h1, h2, h3 {
-        color: #285747;
-        letter-spacing: -0.02em;
-    }
-
-    .stAlert {
-        border-radius: 18px;
-    }
-
-    div[data-testid="stExpander"] {
-        border: 1px solid #E7DDCC;
-        border-radius: 18px;
-        background: rgba(255,253,248,0.72);
+        font-size: 2rem;
     }
 
     .section-title {
-        font-size: 1.5rem;
-        font-weight: 700;
-        color: #2F5D50;
-        margin-top: 1.5rem;
-        margin-bottom: 0.3rem;
+        font-size: 1.4rem;
     }
-
-    .section-subtitle {
-        color: #6A6A6A;
-        margin-bottom: 1.2rem;
-    }
-
-    div[data-testid="stMetric"] {
-        background: #FFFDF8;
-        border: 1px solid #E7DDCC;
-        padding: 14px;
-        border-radius: 20px;
-        box-shadow: 0 4px 14px rgba(0,0,0,0.04);
-    }
-
-    .stButton > button {
-        background: linear-gradient(135deg, #2F5D50 0%, #567C6B 100%);
-        color: white;
-        border: none;
-        border-radius: 14px;
-        padding: 0.6rem 1.2rem;
-        font-weight: 600;
-        transition: all 0.25s ease;
-    }
-
-    .stButton > button:hover {
-        background: linear-gradient(135deg, #25483E 0%, #476B5C 100%);
-        transform: translateY(-1px);
-        box-shadow: 0 8px 18px rgba(47, 93, 80, 0.18);
-    }
-
-    .stDownloadButton > button {
-        background: #D6B98C;
-        color: #2F2F2F;
-        border: none;
-        border-radius: 14px;
-        font-weight: 600;
-    }
-
-    .stDownloadButton > button:hover {
-        background: #CBAE7F;
-        color: #1F1F1F;
-    }
-
-    .stSelectbox > div > div,
-    .stTextInput > div > div,
-    .stNumberInput > div > div {
-        border-radius: 14px !important;
-        border: 1px solid #D8CCB8 !important;
-        background-color: #FFFDF8 !important;
-    }
-
-    div[data-testid="stDataFrame"] {
-        border-radius: 18px;
-        overflow: hidden;
-        border: 1px solid #E7DDCC;
-        background: #FFFDF8;
-    }
-
-    .sidebar-link {
-        display: flex;
-        align-items: center;
-        padding: 12px 15px;
-        margin: 0 0 9px 0;
-        border: 1px solid rgba(47,93,80,0.06);
-        border-radius: 16px;
-        text-decoration: none !important;
-        background: rgba(47,93,80,0.075);
-        color: #285747 !important;
-        font-weight: 650;
-        transition: all 180ms ease;
-        box-shadow: 0 2px 7px rgba(45,67,54,0.025);
-    }
-
-    .sidebar-link:hover {
-        background: #DDE8DC;
-        border-color: rgba(47,93,80,0.16);
-        color: #21483B !important;
-        transform: translateX(3px);
-        box-shadow: 0 6px 14px rgba(45,67,54,0.07);
-    }
-
-    .sidebar-link:focus-visible {
-        outline: 3px solid #D6B98C;
-        outline-offset: 2px;
-    }
-
-    .section-anchor {
-        scroll-margin-top: 1rem;
-    }
-
-    div[data-testid="stDataFrame"] {
-        border-radius: 18px;
-        overflow: hidden;
-    }
-
-    .stDownloadButton > button {
-        min-height: 2.8rem;
-        padding: 0.55rem 1rem;
-    }
-
-    @media (max-width: 768px) {
-        .hero {
-            padding: 1.6rem;
-            border-radius: 24px 24px 24px 8px;
-        }
-
-        .hero-title {
-            font-size: 1.8rem;
-        }
-    }
+}
 
 </style>
 """, unsafe_allow_html=True)
 
 
 # ============================================================
-# HELPER FUNCTIONS
+# 2. HELPER FUNCTIONS
 # ============================================================
 
-def format_number(value: float | int | None, decimals: int = 1) -> str:
+def format_number(value, decimals=1):
+
     if value is None or pd.isna(value):
         return "—"
 
-    formatted = f"{float(value):,.{decimals}f}"
-    return formatted.replace(",", "_").replace(".", ",").replace("_", ".")
+    result = f"{float(value):,.{decimals}f}"
+
+    return result.replace(",", "_").replace(".", ",").replace("_", ".")
 
 
-def format_date(value) -> str:
+def format_date(value):
+
     if pd.isna(value):
         return "—"
 
-    months_id = [
+    months = [
         "Januari", "Februari", "Maret", "April",
         "Mei", "Juni", "Juli", "Agustus",
-        "September", "Oktober", "November", "Desember",
+        "September", "Oktober", "November", "Desember"
     ]
 
-    date_value = pd.Timestamp(value)
+    d = pd.Timestamp(value)
 
-    return (
-        f"{date_value.day} "
-        f"{months_id[date_value.month - 1]} "
-        f"{date_value.year}"
-    )
+    return f"{d.day} {months[d.month - 1]} {d.year}"
 
 
-def get_class_label(value, labels: dict) -> str:
+def get_class_label(value, labels):
+
     try:
         key = str(int(value))
-    except (TypeError, ValueError):
+    except (ValueError, TypeError):
         key = str(value)
 
     return labels.get(key, f"Kelas {key}")
 
 
+def render_header(title, subtitle):
+
+    st.markdown(
+        f'<div class="section-title">{html.escape(title)}</div>',
+        unsafe_allow_html=True
+    )
+
+    st.markdown(
+        f'<div class="section-subtitle">{html.escape(subtitle)}</div>',
+        unsafe_allow_html=True
+    )
+
+
+def render_table(df, badge_column=None, max_height=520):
+
+    if df.empty:
+        st.info("Tidak ada data untuk ditampilkan.")
+        return
+
+    headers = "".join(
+        f"<th>{html.escape(str(col))}</th>"
+        for col in df.columns
+    )
+
+    rows = []
+
+    for _, row in df.iterrows():
+
+        cells = []
+
+        for col in df.columns:
+
+            value = row[col]
+
+            if pd.isna(value):
+                value = "—"
+
+            value = str(value)
+
+            if col == badge_column:
+
+                normalized = value.lower()
+
+                if "naik" in normalized:
+                    badge = "badge-up"
+                elif "turun" in normalized:
+                    badge = "badge-down"
+                else:
+                    badge = "badge-stable"
+
+                cell = (
+                    f'<span class="status-badge {badge}">'
+                    f'{html.escape(value)}</span>'
+                )
+
+            else:
+                cell = html.escape(value)
+
+            cells.append(f"<td>{cell}</td>")
+
+        rows.append("<tr>" + "".join(cells) + "</tr>")
+
+    max_style = (
+        f"max-height:{int(max_height)}px;"
+        if max_height else ""
+    )
+
+    table_html = f"""
+<div class="table-shell" style="{max_style}">
+<table class="pretty-table">
+<thead><tr>{headers}</tr></thead>
+<tbody>{"".join(rows)}</tbody>
+</table>
+</div>
+"""
+
+    st.markdown(table_html, unsafe_allow_html=True)
+
+
+def apply_chart_style(fig, height=390):
+
+    fig.update_layout(
+        height=height,
+        margin=dict(l=15, r=15, t=45, b=15),
+        paper_bgcolor="#FFFDF8",
+        plot_bgcolor="#FFFDF8",
+        font=dict(
+            family="Segoe UI",
+            color="#344239",
+            size=12
+        ),
+        title_font=dict(
+            color="#315C49",
+            size=17
+        ),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            x=0
+        ),
+    )
+
+    fig.update_xaxes(
+        showgrid=False,
+        linecolor="#E8E1D5",
+        tickfont=dict(color="#718076")
+    )
+
+    fig.update_yaxes(
+        gridcolor="#EAE4D9",
+        zeroline=False,
+        linecolor="#E8E1D5",
+        tickfont=dict(color="#718076")
+    )
+
+    return fig
+
+
 # ============================================================
-# LOAD MODELS AND DATA
+# 3. LOAD MODELS AND DATA
 # ============================================================
 
 @st.cache_resource(show_spinner="Memuat model dan data penelitian...")
+
 def load_assets():
 
     required_files = [
@@ -350,8 +651,9 @@ def load_assets():
     ]
 
     if missing:
+
         raise FileNotFoundError(
-            "Artefak berikut belum ditemukan: "
+            "File artefak tidak ditemukan: "
             + ", ".join(missing)
         )
 
@@ -375,45 +677,63 @@ def load_assets():
 
     history = pd.read_csv(
         ARTIFACT_DIR / "latest_history.csv",
-        parse_dates=["Date"],
+        parse_dates=["Date"]
     )
 
     latest_features = pd.read_csv(
         ARTIFACT_DIR / "latest_features.csv",
-        parse_dates=["Date"],
+        parse_dates=["Date"]
     )
 
-    # Feature order must follow model metadata.
     reg_features = metadata["regression"]["features"]
+
     cls_features = metadata["classification"]["features"]
 
-    for frame_name, frame, features in [
-        ("latest_features", latest_features, reg_features),
-        ("latest_features", latest_features, cls_features),
-    ]:
+    # Validate feature columns.
+
+    for features in [reg_features, cls_features]:
 
         missing_columns = [
-            c for c in features
-            if c not in frame.columns
+            col for col in features
+            if col not in latest_features.columns
         ]
 
         if missing_columns:
+
             raise ValueError(
-                f"Kolom fitur {frame_name} tidak lengkap: "
-                f"{missing_columns}"
+                f"Fitur tidak ditemukan: {missing_columns}"
             )
 
-    # Validate commodity-province pairs.
-    key_cols = ["Commodity", "Province"]
+    # Validate data columns.
 
-    if latest_features.duplicated(key_cols).any():
+    required_feature_columns = [
+        "Date", "Commodity", "Province", "current_price"
+    ]
+
+    for col in required_feature_columns:
+
+        if col not in latest_features.columns:
+            raise ValueError(f"Kolom {col} tidak tersedia.")
+
+    for col in ["Date", "Commodity", "Province", "Price"]:
+
+        if col not in history.columns:
+            raise ValueError(f"Kolom historis {col} tidak tersedia.")
+
+    # Validate duplicate series.
+
+    if latest_features.duplicated(
+        ["Commodity", "Province"]
+    ).any():
+
         raise ValueError(
-            "latest_features.csv memiliki kombinasi "
-            "komoditas-provinsi duplikat."
+            "Terdapat kombinasi komoditas dan provinsi duplikat."
         )
 
-    # Generate predictions.
+    # Prediction input.
+
     reg_input = latest_features[reg_features].copy()
+
     cls_input = latest_features[cls_features].copy()
 
     predicted_price = regression_model.predict(reg_input)
@@ -421,25 +741,26 @@ def load_assets():
     predicted_class = classification_model.predict(cls_input)
 
     if len(predicted_price) != len(latest_features):
+
         raise ValueError(
-            "Jumlah prediksi regresi tidak sesuai jumlah seri."
+            "Jumlah hasil prediksi regresi tidak sesuai."
         )
 
     if len(predicted_class) != len(latest_features):
+
         raise ValueError(
-            "Jumlah prediksi klasifikasi tidak sesuai jumlah seri."
+            "Jumlah hasil prediksi klasifikasi tidak sesuai."
         )
 
     predictions = latest_features[
         ["Date", "Commodity", "Province", "current_price"]
     ].copy()
 
+    horizon = int(metadata["horizon_days"])
+
     predictions["TargetDate"] = (
-        pd.to_datetime(predictions["Date"])
-        + pd.to_timedelta(
-            int(metadata["horizon_days"]),
-            unit="D"
-        )
+        predictions["Date"]
+        + pd.to_timedelta(horizon, unit="D")
     )
 
     predictions["Pred_Harga_H30"] = np.asarray(
@@ -454,22 +775,21 @@ def load_assets():
         for value in predicted_class
     ]
 
+    current = predictions["current_price"].to_numpy(dtype=float)
+
+    predicted = predictions["Pred_Harga_H30"].to_numpy(dtype=float)
+
     predictions["Perubahan_Persen"] = np.where(
-        predictions["current_price"].to_numpy(dtype=float) != 0,
-        (
-            predictions["Pred_Harga_H30"].to_numpy(dtype=float)
-            / predictions["current_price"].to_numpy(dtype=float)
-            - 1
-        ) * 100,
-        np.nan,
+        current != 0,
+        (predicted / current - 1) * 100,
+        np.nan
     )
 
-    # Optional class probabilities.
+    # Classification probabilities.
+
     if hasattr(classification_model, "predict_proba"):
 
-        probabilities = classification_model.predict_proba(
-            cls_input
-        )
+        probabilities = classification_model.predict_proba(cls_input)
 
         classes = getattr(
             classification_model,
@@ -479,12 +799,11 @@ def load_assets():
 
         for idx, class_value in enumerate(classes):
 
-            label = get_class_label(
-                class_value,
-                labels
-            )
+            label = get_class_label(class_value, labels)
 
             predictions[f"Prob_{label}"] = probabilities[:, idx]
+
+    # Normalize dates.
 
     history["Date"] = pd.to_datetime(history["Date"])
 
@@ -507,15 +826,15 @@ def load_assets():
         eligible,
         history,
         latest_features,
-        predictions,
+        predictions
     )
 
 
 # ============================================================
-# DISPLAY HELPERS
+# 4. DISPLAY HELPERS
 # ============================================================
 
-def show_historical_warning(metadata: dict):
+def show_historical_warning(metadata):
 
     last_date = pd.Timestamp(
         metadata["latest_data_date"]
@@ -525,21 +844,21 @@ def show_historical_warning(metadata: dict):
         days=int(metadata["horizon_days"])
     )
 
-    st.warning(
-        f"**Catatan periode data:** dataset berakhir pada "
-        f"{format_date(last_date)}. Prediksi H+30 pada aplikasi ini "
-        f"merupakan simulasi historis dengan target "
-        f"{format_date(target_date)}, bukan prakiraan harga terkini "
-        "tahun 2026. Satuan harga mengikuti dataset sumber "
-        "dan belum diverifikasi."
+    st.markdown(
+        f"""
+<div class="info-note">
+<b>Informasi periode data</b><br>
+Dataset penelitian berakhir pada <b>{format_date(last_date)}</b>.
+Prediksi H+30 merupakan simulasi historis dengan target
+<b>{format_date(target_date)}</b>, bukan prakiraan harga terkini tahun 2026.
+Satuan harga mengikuti dataset sumber dan belum diverifikasi.
+</div>
+""",
+        unsafe_allow_html=True
     )
 
 
-def prediction_row(
-    predictions: pd.DataFrame,
-    commodity: str,
-    province: str
-):
+def prediction_row(predictions, commodity, province):
 
     selected = predictions[
         (predictions["Commodity"] == commodity)
@@ -552,10 +871,7 @@ def prediction_row(
     return selected.iloc[0]
 
 
-def make_history_chart(
-    history: pd.DataFrame,
-    forecast_row: pd.Series
-):
+def make_history_chart(history, forecast_row):
 
     hist = history[
         (history["Commodity"] == forecast_row["Commodity"])
@@ -571,45 +887,36 @@ def make_history_chart(
             mode="lines",
             name="Harga historis",
             line=dict(
-                color="#287A55",
-                width=2.5
+                color="#367858",
+                width=3
             ),
             hovertemplate=(
                 "%{x|%d %b %Y}<br>"
                 "Harga: %{y:,.1f}<extra></extra>"
-            ),
+            )
         )
     )
 
-    last_date = pd.Timestamp(
-        forecast_row["Date"]
-    )
+    last_date = pd.Timestamp(forecast_row["Date"])
 
-    target_date = pd.Timestamp(
-        forecast_row["TargetDate"]
-    )
+    target_date = pd.Timestamp(forecast_row["TargetDate"])
 
-    last_price = float(
-        forecast_row["current_price"]
-    )
+    last_price = float(forecast_row["current_price"])
 
-    predicted_price = float(
-        forecast_row["Pred_Harga_H30"]
-    )
+    predicted_price = float(forecast_row["Pred_Harga_H30"])
 
-    # Connector only, not daily forecast.
     fig.add_trace(
         go.Scatter(
             x=[last_date, target_date],
             y=[last_price, predicted_price],
             mode="lines",
-            name="Penghubung ke titik H+30",
+            name="Penghubung ke H+30",
             line=dict(
-                color="#D59A42",
-                width=2,
+                color="#D2A75F",
+                width=2.5,
                 dash="dash"
             ),
-            hoverinfo="skip",
+            hoverinfo="skip"
         )
     )
 
@@ -620,57 +927,29 @@ def make_history_chart(
             mode="markers",
             name="Prediksi H+30",
             marker=dict(
-                color="#D59A42",
-                size=13,
+                color="#D2A75F",
+                size=14,
                 symbol="diamond"
             ),
             hovertemplate=(
                 "%{x|%d %b %Y}<br>"
                 "Prediksi: %{y:,.1f}<extra></extra>"
-            ),
+            )
         )
     )
 
     fig.update_layout(
-        height=390,
-        margin=dict(
-            l=10,
-            r=10,
-            t=25,
-            b=10
-        ),
+        title="Pergerakan harga dan titik prediksi",
         hovermode="x unified",
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            x=0
-        ),
-        xaxis_title=None,
-        yaxis_title="Nilai harga (satuan dataset)",
-        plot_bgcolor="white",
-        paper_bgcolor="white",
+        yaxis_title="Harga (satuan dataset)",
+        xaxis_title=None
     )
 
-    fig.update_xaxes(showgrid=False)
-
-    fig.update_yaxes(
-        gridcolor="#E9EFEA",
-        zeroline=False
-    )
-
-    return fig
-
-
-def render_header(title: str, subtitle: str):
-
-    st.markdown(f"## {title}")
-
-    st.caption(subtitle)
+    return apply_chart_style(fig, 420)
 
 
 # ============================================================
-# LOAD DATA AND MODELS
+# 5. LOAD APPLICATION
 # ============================================================
 
 try:
@@ -682,140 +961,135 @@ try:
         eligible,
         history,
         latest_features,
-        predictions,
+        predictions
     ) = load_assets()
 
 except Exception as exc:
 
     st.error(
-        "Aplikasi belum dapat memuat model atau data artefak."
+        "Aplikasi belum dapat memuat model atau data."
     )
 
     st.exception(exc)
 
     st.info(
-        "Pastikan folder artifacts tersedia dan install "
-        "requirements.txt dengan versi library yang sesuai."
+        "Pastikan folder artifacts dan seluruh file model tersedia."
     )
 
     st.stop()
 
 
 # ============================================================
-# SIDEBAR NAVIGATION
+# 6. SIDEBAR
 # ============================================================
 
 with st.sidebar:
 
-    st.markdown("## 🌾 PanganPulse")
-
-    st.caption("Food Price Forecasting Dashboard")
-
-    st.markdown("---")
-
     st.markdown(
-        '<a class="sidebar-link" href="#dashboard">'
-        '🏠 Dashboard</a>',
+        '<div class="sidebar-brand">🌾 PanganPulse</div>',
         unsafe_allow_html=True
     )
 
     st.markdown(
-        '<a class="sidebar-link" href="#prediksi">'
-        '📈 Prediksi H+30</a>',
-        unsafe_allow_html=True
-    )
-
-    st.markdown(
-        '<a class="sidebar-link" href="#perbandingan">'
-        '📊 Perbandingan Provinsi</a>',
-        unsafe_allow_html=True
-    )
-
-    st.markdown(
-        '<a class="sidebar-link" href="#tentang">'
-        'ℹ️ Tentang Model</a>',
+        '<div class="sidebar-description">'
+        'Food Price Forecasting Dashboard'
+        '</div>',
         unsafe_allow_html=True
     )
 
     st.markdown("---")
 
-    st.markdown("### Ringkasan")
+    navigation = [
+        ("🏠", "Dashboard", "#dashboard"),
+        ("📈", "Prediksi H+30", "#prediksi"),
+        ("📊", "Perbandingan Provinsi", "#perbandingan"),
+        ("ℹ️", "Tentang Model", "#tentang"),
+    ]
+
+    for icon, label, link in navigation:
+
+        st.markdown(
+            f'<a class="sidebar-link" href="{link}">'
+            f'<span>{icon}</span><span>{label}</span></a>',
+            unsafe_allow_html=True
+        )
+
+    st.markdown("---")
+
+    st.markdown("### Ringkasan Data")
 
     st.markdown(
-        f"- **{eligible['Commodity'].nunique()}** komoditas"
+        f"**{eligible['Commodity'].nunique()}** komoditas"
     )
 
     st.markdown(
-        f"- **{eligible['Province'].nunique()}** provinsi"
+        f"**{eligible['Province'].nunique()}** provinsi"
     )
 
     st.markdown(
-        f"- Horizon **H+{metadata['horizon_days']}**"
+        f"**H+{metadata['horizon_days']}** horizon prediksi"
     )
 
-    st.markdown(
-        f"- Data s.d. **{format_date(metadata['latest_data_date'])}**"
+    st.caption(
+        f"Data terakhir: {format_date(metadata['latest_data_date'])}"
     )
+
+    st.markdown("---")
+
+    st.caption("Academic Machine Learning Project")
 
 
 # ============================================================
-# 1. DASHBOARD
+# 7. DASHBOARD
 # ============================================================
 
 st.markdown(
-    '<div id="dashboard"></div>',
+    '<div id="dashboard" class="section-anchor"></div>',
     unsafe_allow_html=True
 )
 
-# ============================================================
-# HERO SECTION
-# ============================================================
-
-st.markdown(
-    """
+st.markdown("""
 <div class="hero">
 <div class="hero-kicker">INDONESIAN FOOD PRICE ANALYSIS</div>
 <div class="hero-title">Pantau Harga. Pahami Prediksi.</div>
 <div class="hero-copy">
-Dashboard analisis dan prediksi harga bahan pokok
-menggunakan Machine Learning untuk memahami pola
-harga tiga komoditas utama di Indonesia.
+Dashboard analisis dan prediksi harga bahan pokok menggunakan
+Machine Learning untuk memahami pola harga tiga komoditas utama
+di Indonesia.
 </div>
 </div>
-""",
-    unsafe_allow_html=True
-)
+""", unsafe_allow_html=True)
 
 
 show_historical_warning(metadata)
 
-provinces_count = int(
-    eligible["Province"].nunique()
-)
 
-commodities_count = int(
-    eligible["Commodity"].nunique()
-)
+# ---------- OVERVIEW METRICS ----------
 
-last_date = pd.Timestamp(
-    metadata["latest_data_date"]
-)
+commodities_count = int(eligible["Commodity"].nunique())
+
+provinces_count = int(eligible["Province"].nunique())
+
+series_count = len(eligible)
 
 c1, c2, c3, c4 = st.columns(4)
 
 c1.metric(
     "Komoditas",
-    commodities_count
+    commodities_count,
+    help="Jumlah komoditas dalam penelitian."
 )
 
 c2.metric(
     "Provinsi",
-    provinces_count
+    provinces_count,
+    help="Jumlah provinsi dalam cakupan data."
 )
 
 c3.metric(
     "Seri tersedia",
-    len(eligible)
+    series_count,
+    help="Jumlah kombinasi komoditas dan provinsi."
 )
 
 c4.metric(
@@ -824,18 +1098,22 @@ c4.metric(
 )
 
 
-# ---------- Historical Price Chart ----------
+# ---------- HISTORICAL TREND ----------
 
-st.markdown("### Gambaran harga historis")
+st.markdown("### Gambaran Harga Historis")
+
+st.caption(
+    "Amati perubahan median harga antarprovinsi untuk setiap komoditas."
+)
 
 commodity_options = sorted(
     predictions["Commodity"].unique().tolist()
 )
 
 selected_commodity = st.selectbox(
-    "Pilih komoditas untuk melihat tren median antarprovinsi",
+    "Pilih komoditas",
     commodity_options,
-    key="dashboard_commodity",
+    key="dashboard_commodity"
 )
 
 selected_history = history[
@@ -851,48 +1129,44 @@ median_history = (
             "Price": "Median harga antarprovinsi"
         }
     )
+    .sort_values("Date")
 )
 
 fig = px.line(
     median_history,
     x="Date",
     y="Median harga antarprovinsi",
-    markers=False,
-    title=f"Median harga historis — {selected_commodity}",
+    title=f"Tren harga — {selected_commodity}"
 )
 
 fig.update_traces(
-    line_color="#287A55",
-    line_width=2.5
+    line=dict(
+        color="#367858",
+        width=3
+    ),
+    hovertemplate=(
+        "%{x|%d %b %Y}<br>"
+        "Median: %{y:,.1f}<extra></extra>"
+    )
 )
 
 fig.update_layout(
-    height=370,
-    margin=dict(
-        l=10,
-        r=10,
-        t=55,
-        b=10
-    ),
-    plot_bgcolor="white",
-    paper_bgcolor="white",
     xaxis_title=None,
-    yaxis_title="Nilai harga (satuan dataset)",
+    yaxis_title="Harga (satuan dataset)"
 )
 
-fig.update_yaxes(
-    gridcolor="#E9EFEA"
-)
+fig = apply_chart_style(fig, 390)
 
 st.plotly_chart(
     fig,
-    use_container_width=True
+    use_container_width=True,
+    config={"displaylogo": False}
 )
 
 
-# ---------- Forecast Summary ----------
+# ---------- FORECAST SUMMARY ----------
 
-st.markdown("### Ringkasan prediksi H+30")
+st.markdown("### Ringkasan Prediksi H+30")
 
 summary = (
     predictions
@@ -901,31 +1175,26 @@ summary = (
         Seri_tersedia=("Province", "nunique"),
         Median_harga_terakhir=("current_price", "median"),
         Median_prediksi_H30=("Pred_Harga_H30", "median"),
-        Median_perubahan_persen=("Perubahan_Persen", "median"),
+        Median_perubahan_persen=("Perubahan_Persen", "median")
     )
     .reset_index()
 )
 
 display_summary = summary.copy()
 
-for col in [
-    "Median_harga_terakhir",
-    "Median_prediksi_H30",
-]:
+display_summary["Median_harga_terakhir"] = (
+    display_summary["Median_harga_terakhir"]
+    .map(lambda x: format_number(x, 1))
+)
 
-    display_summary[col] = display_summary[col].map(
-        lambda x: format_number(x, 1)
-    )
+display_summary["Median_prediksi_H30"] = (
+    display_summary["Median_prediksi_H30"]
+    .map(lambda x: format_number(x, 1))
+)
 
 display_summary["Median_perubahan_persen"] = (
     display_summary["Median_perubahan_persen"]
-    .map(
-        lambda x: (
-            f"{x:+.2f}%"
-            if pd.notna(x)
-            else "—"
-        )
-    )
+    .map(lambda x: f"{x:+.2f}%" if pd.notna(x) else "—")
 )
 
 display_summary = display_summary.rename(
@@ -934,19 +1203,15 @@ display_summary = display_summary.rename(
         "Seri_tersedia": "Jumlah provinsi",
         "Median_harga_terakhir": "Median harga terakhir",
         "Median_prediksi_H30": "Median prediksi H+30",
-        "Median_perubahan_persen": "Median perubahan",
+        "Median_perubahan_persen": "Median perubahan"
     }
 )
 
-st.dataframe(
-    display_summary,
-    use_container_width=True,
-    hide_index=True,
-)
+render_table(display_summary, max_height=320)
 
 
 # ============================================================
-# 2. PREDICTION H+30
+# 8. PREDICTION H+30
 # ============================================================
 
 st.divider()
@@ -958,20 +1223,17 @@ st.markdown(
 
 render_header(
     "Prediksi Harga H+30",
-    "Pilih komoditas dan provinsi untuk melihat estimasi "
-    "harga 30 hari setelah tanggal data terakhir.",
+    "Pilih komoditas dan provinsi untuk melihat estimasi harga "
+    "30 hari setelah tanggal pengamatan terakhir."
 )
 
 show_historical_warning(metadata)
 
-commodity_options = sorted(
-    predictions["Commodity"].unique().tolist()
-)
 
 commodity = st.selectbox(
-    "Komoditas",
-    commodity_options,
-    key="prediction_commodity",
+    "Pilih komoditas",
+    sorted(predictions["Commodity"].unique().tolist()),
+    key="prediction_commodity"
 )
 
 province_options = sorted(
@@ -982,9 +1244,9 @@ province_options = sorted(
 )
 
 province = st.selectbox(
-    "Provinsi",
+    "Pilih provinsi",
     province_options,
-    key="prediction_province",
+    key="prediction_province"
 )
 
 row = prediction_row(
@@ -993,66 +1255,62 @@ row = prediction_row(
     province
 )
 
+
 if row is None:
 
-    st.error(
-        "Seri komoditas-provinsi tidak tersedia "
-        "pada data penelitian."
-    )
+    st.error("Data prediksi tidak tersedia.")
 
 else:
 
-    st.markdown("### Hasil prediksi")
+    st.markdown("### Hasil Prediksi")
 
     m1, m2, m3 = st.columns(3)
 
     m1.metric(
         "Harga terakhir",
         format_number(row["current_price"]),
-        help="Harga pada tanggal pengamatan terakhir.",
+    )
+
+    delta_value = (
+        f"{row['Perubahan_Persen']:+.2f}%"
+        if pd.notna(row["Perubahan_Persen"])
+        else None
     )
 
     m2.metric(
         "Prediksi harga H+30",
         format_number(row["Pred_Harga_H30"]),
-        delta=(
-            f"{row['Perubahan_Persen']:+.2f}% "
-            "dari harga terakhir"
-        ),
-        help="Estimasi harga tepat 30 hari setelah tanggal pengamatan.",
+        delta=delta_value
     )
 
     m3.metric(
         "Klasifikasi perubahan",
-        row["Pred_Kelas_H30"],
-        help=(
-            "Kategori berdasarkan perubahan harga H+30: "
-            "Turun, Stabil, atau Naik."
-        ),
+        row["Pred_Kelas_H30"]
     )
 
     st.caption(
-        f"Tanggal pengamatan: **{format_date(row['Date'])}**  ·  "
-        f"Tanggal target: **{format_date(row['TargetDate'])}**"
+        f"Tanggal pengamatan: **{format_date(row['Date'])}** "
+        f" · Target prediksi: **{format_date(row['TargetDate'])}**"
     )
 
-    # Historical chart and forecast point.
-    st.markdown(
-        "### Grafik harga historis dan titik prediksi"
-    )
+    # HISTORY CHART
+
+    st.markdown("### Grafik Historis dan Titik Prediksi")
 
     st.plotly_chart(
         make_history_chart(history, row),
         use_container_width=True,
+        config={"displaylogo": False}
     )
 
     st.caption(
         "Garis putus-putus hanya menghubungkan harga terakhir "
-        "dengan titik target H+30. Garis tersebut bukan "
-        "prediksi harga harian di antara kedua tanggal."
+        "dengan titik target H+30. Garis tersebut bukan prediksi "
+        "harga harian di antara kedua tanggal."
     )
 
-    # Classification probability.
+    # CLASSIFICATION PROBABILITY
+
     probability_cols = [
         col for col in predictions.columns
         if col.startswith("Prob_")
@@ -1060,7 +1318,7 @@ else:
 
     if probability_cols:
 
-        st.markdown("### Probabilitas klasifikasi")
+        st.markdown("### Probabilitas Klasifikasi")
 
         prob_values = []
 
@@ -1068,12 +1326,10 @@ else:
 
             label = col.replace("Prob_", "")
 
-            prob_values.append(
-                {
-                    "Kelas": label,
-                    "Probabilitas": float(row[col])
-                }
-            )
+            prob_values.append({
+                "Kelas": label,
+                "Probabilitas": float(row[col])
+            })
 
         prob_df = pd.DataFrame(prob_values)
 
@@ -1081,41 +1337,42 @@ else:
             prob_df,
             x="Kelas",
             y="Probabilitas",
+            color="Kelas",
             text=prob_df["Probabilitas"].map(
                 lambda x: f"{x:.1%}"
             ),
-            color="Kelas",
             color_discrete_map={
-                "Turun": "#D66B62",
-                "Stabil": "#8A9A8D",
-                "Naik": "#287A55",
-            },
+                "Turun": "#C86D63",
+                "Stabil": "#A7B09F",
+                "Naik": "#4F8068"
+            }
         )
 
         fig_prob.update_layout(
             showlegend=False,
-            height=280,
             yaxis=dict(
                 tickformat=".0%",
                 range=[0, 1]
             ),
-            margin=dict(
-                l=10,
-                r=10,
-                t=20,
-                b=10
-            ),
-            plot_bgcolor="white",
-            paper_bgcolor="white",
+            xaxis_title=None,
+            yaxis_title="Probabilitas"
         )
+
+        fig_prob.update_traces(
+            textposition="outside"
+        )
+
+        fig_prob = apply_chart_style(fig_prob, 320)
 
         st.plotly_chart(
             fig_prob,
-            use_container_width=True
+            use_container_width=True,
+            config={"displaylogo": False}
         )
 
-    # Historical data details.
-    with st.expander("Lihat detail data seri"):
+    # DETAIL DATA
+
+    with st.expander("Lihat detail data historis"):
 
         series_history = history[
             (history["Commodity"] == commodity)
@@ -1123,24 +1380,32 @@ else:
         ].sort_values(
             "Date",
             ascending=False
+        ).head(30)
+
+        detail_df = series_history.rename(
+            columns={
+                "Date": "Tanggal",
+                "Commodity": "Komoditas",
+                "Province": "Provinsi",
+                "Price": "Harga"
+            }
+        ).copy()
+
+        detail_df["Tanggal"] = (
+            detail_df["Tanggal"].map(format_date)
         )
 
-        st.dataframe(
-            series_history.rename(
-                columns={
-                    "Date": "Tanggal",
-                    "Commodity": "Komoditas",
-                    "Province": "Provinsi",
-                    "Price": "Harga",
-                }
-            ),
-            use_container_width=True,
-            hide_index=True,
+        detail_df["Harga"] = (
+            detail_df["Harga"].map(
+                lambda x: format_number(x, 1)
+            )
         )
+
+        render_table(detail_df, max_height=400)
 
 
 # ============================================================
-# 3. PROVINCE COMPARISON
+# 9. PROVINCE COMPARISON
 # ============================================================
 
 st.divider()
@@ -1152,36 +1417,35 @@ st.markdown(
 
 render_header(
     "Perbandingan Antarprovinsi",
-    "Bandingkan harga terakhir dan estimasi harga H+30 "
-    "untuk satu komoditas pada seluruh provinsi yang tersedia.",
+    "Bandingkan harga terakhir dan hasil prediksi H+30 "
+    "untuk satu komoditas pada seluruh provinsi."
 )
 
 show_historical_warning(metadata)
 
-commodity_options = sorted(
-    predictions["Commodity"].unique().tolist()
-)
 
 commodity = st.selectbox(
-    "Pilih komoditas",
-    commodity_options,
-    key="comparison_commodity",
+    "Pilih komoditas untuk dibandingkan",
+    sorted(predictions["Commodity"].unique().tolist()),
+    key="comparison_commodity"
 )
 
 comp = predictions[
     predictions["Commodity"] == commodity
 ].copy()
 
+
 sort_option = st.selectbox(
-    "Urutkan berdasarkan",
+    "Urutkan hasil berdasarkan",
     [
         "Prediksi harga tertinggi",
         "Prediksi harga terendah",
         "Persentase kenaikan tertinggi",
         "Persentase penurunan terbesar",
-        "Nama provinsi",
-    ],
+        "Nama provinsi"
+    ]
 )
+
 
 if sort_option == "Prediksi harga tertinggi":
 
@@ -1216,34 +1480,14 @@ else:
     comp = comp.sort_values("Province")
 
 
-# ---------- Comparison Table ----------
-
-table = comp[
-    [
-        "Province",
-        "current_price",
-        "Pred_Harga_H30",
-        "Perubahan_Persen",
-        "Pred_Kelas_H30",
-    ]
-].rename(
-    columns={
-        "Province": "Provinsi",
-        "current_price": "Harga terakhir",
-        "Pred_Harga_H30": "Prediksi H+30",
-        "Perubahan_Persen": "Perubahan (%)",
-        "Pred_Kelas_H30": "Klasifikasi",
-    }
-)
-
 st.markdown(f"### {commodity}")
 
 st.caption(
-    f"{len(comp)} seri provinsi tersedia untuk komoditas ini."
+    f"{len(comp)} provinsi tersedia untuk komoditas ini."
 )
 
 
-# ---------- Comparison Chart ----------
+# COMPARISON CHART
 
 fig = go.Figure()
 
@@ -1252,7 +1496,10 @@ fig.add_trace(
         x=comp["Province"],
         y=comp["current_price"],
         name="Harga terakhir",
-        marker_color="#9CB7A4",
+        marker_color="#D8BD8D",
+        hovertemplate=(
+            "%{x}<br>Harga terakhir: %{y:,.1f}<extra></extra>"
+        )
     )
 )
 
@@ -1261,77 +1508,95 @@ fig.add_trace(
         x=comp["Province"],
         y=comp["Pred_Harga_H30"],
         name="Prediksi H+30",
-        marker_color="#287A55",
+        marker_color="#4F8068",
+        hovertemplate=(
+            "%{x}<br>Prediksi H+30: %{y:,.1f}<extra></extra>"
+        )
     )
 )
 
 fig.update_layout(
+    title=f"Perbandingan harga antarprovinsi — {commodity}",
     barmode="group",
-    height=440,
-    margin=dict(
-        l=10,
-        r=10,
-        t=20,
-        b=10
-    ),
     xaxis_title=None,
-    yaxis_title="Nilai harga (satuan dataset)",
-    plot_bgcolor="white",
-    paper_bgcolor="white",
-    legend=dict(
-        orientation="h",
-        yanchor="bottom",
-        y=1.02,
-        x=0
-    ),
+    yaxis_title="Harga (satuan dataset)"
 )
 
-fig.update_yaxes(
-    gridcolor="#E9EFEA"
-)
+fig = apply_chart_style(fig, 450)
 
 st.plotly_chart(
     fig,
-    use_container_width=True
-)
-
-
-# ---------- Comparison Results ----------
-
-st.markdown("### Tabel hasil")
-
-st.dataframe(
-    table.round(
-        {
-            "Harga terakhir": 1,
-            "Prediksi H+30": 1,
-            "Perubahan (%)": 2
-        }
-    ),
     use_container_width=True,
-    hide_index=True,
+    config={"displaylogo": False}
 )
 
 
-# ---------- Download CSV ----------
+# COMPARISON TABLE
+
+st.markdown("### Tabel Perbandingan")
+
+table = comp[
+    [
+        "Province",
+        "current_price",
+        "Pred_Harga_H30",
+        "Perubahan_Persen",
+        "Pred_Kelas_H30"
+    ]
+].rename(
+    columns={
+        "Province": "Provinsi",
+        "current_price": "Harga terakhir",
+        "Pred_Harga_H30": "Prediksi H+30",
+        "Perubahan_Persen": "Perubahan (%)",
+        "Pred_Kelas_H30": "Klasifikasi"
+    }
+).copy()
+
+table["Harga terakhir"] = (
+    table["Harga terakhir"].map(
+        lambda x: format_number(x, 1)
+    )
+)
+
+table["Prediksi H+30"] = (
+    table["Prediksi H+30"].map(
+        lambda x: format_number(x, 1)
+    )
+)
+
+table["Perubahan (%)"] = (
+    table["Perubahan (%)"].map(
+        lambda x: f"{x:+.2f}%" if pd.notna(x) else "—"
+    )
+)
+
+render_table(
+    table,
+    badge_column="Klasifikasi",
+    max_height=600
+)
+
+
+# DOWNLOAD CSV
 
 csv_data = comp.to_csv(
     index=False
 ).encode("utf-8-sig")
 
 st.download_button(
-    "⬇️ Unduh hasil perbandingan (CSV)",
+    "⬇️ Unduh hasil perbandingan CSV",
     data=csv_data,
     file_name=(
         f"panganpulse_"
         f"{commodity.lower().replace(' ', '_')}_h30.csv"
     ),
-    mime="text/csv",
+    mime="text/csv"
 )
 
 
 # ============================================================
-# 4. ABOUT MODEL
+# 10. ABOUT MODEL
 # ============================================================
 
 st.divider()
@@ -1343,11 +1608,12 @@ st.markdown(
 
 render_header(
     "Tentang Model dan Penelitian",
-    "Informasi algoritma, metrik evaluasi, cakupan data, "
-    "dan keterbatasan model yang digunakan.",
+    "Informasi algoritma, performa validasi, fitur, "
+    "cakupan penelitian, dan keterbatasan model."
 )
 
 show_historical_warning(metadata)
+
 
 reg = metadata["regression"]
 
@@ -1356,14 +1622,15 @@ cls = metadata["classification"]
 scope = metadata["scope"]
 
 
-# ---------- Regression Model ----------
+# REGRESSION
 
-st.markdown("### Model regresi")
+st.markdown("### Model Regresi")
 
 st.subheader(reg["candidate"])
 
 st.write(
-    f"Model dipilih berdasarkan **{reg['selection_rule']}**."
+    f"Model regresi dipilih berdasarkan "
+    f"**{reg['selection_rule']}**."
 )
 
 r1, r2, r3 = st.columns(3)
@@ -1390,14 +1657,15 @@ r3.metric(
 )
 
 
-# ---------- Classification Model ----------
+# CLASSIFICATION
 
-st.markdown("### Model klasifikasi")
+st.markdown("### Model Klasifikasi")
 
 st.subheader(cls["candidate"])
 
 st.write(
-    f"Model dipilih berdasarkan **{cls['selection_rule']}**."
+    f"Model klasifikasi dipilih berdasarkan "
+    f"**{cls['selection_rule']}**."
 )
 
 c1, c2, c3 = st.columns(3)
@@ -1418,9 +1686,9 @@ c3.metric(
 )
 
 
-# ---------- Research Scope ----------
+# RESEARCH SCOPE
 
-st.markdown("### Cakupan penelitian")
+st.markdown("### Cakupan Penelitian")
 
 a, b, c = st.columns(3)
 
@@ -1441,62 +1709,61 @@ c.metric(
 
 st.write("**Komoditas yang dianalisis:**")
 
-st.write(
-    ", ".join(scope["commodities"])
-)
+st.write(", ".join(scope["commodities"]))
 
 
-# ---------- Features ----------
+# FEATURES
 
 with st.expander("Lihat fitur yang digunakan"):
 
-    st.write("**Fitur regresi:**")
+    st.markdown("**Fitur regresi:**")
 
     st.code(
         ", ".join(reg["features"])
     )
 
-    st.write("**Fitur klasifikasi:**")
+    st.markdown("**Fitur klasifikasi:**")
 
     st.code(
         ", ".join(cls["features"])
     )
 
 
-# ---------- Model Configuration ----------
+# MODEL PARAMETERS
 
 with st.expander("Lihat konfigurasi model"):
 
-    st.write("**Konfigurasi regresi:**")
+    st.markdown("**Parameter regresi:**")
 
-    st.json(
-        reg["params"]
-    )
+    st.json(reg["params"])
 
-    st.write("**Konfigurasi klasifikasi:**")
+    st.markdown("**Parameter klasifikasi:**")
 
-    st.json(
-        cls["params"]
-    )
+    st.json(cls["params"])
 
 
-# ---------- Evaluation Methodology ----------
+# VALIDATION METHODOLOGY
 
-st.markdown("### Metodologi evaluasi")
+st.markdown("### Metodologi Evaluasi")
 
 validation = metadata["validation_design"]
 
 folds_value = validation.get("folds", [])
 
-fold_count = (
-    len(folds_value)
-    if isinstance(folds_value, (list, tuple, dict))
-    else int(folds_value)
-)
+if isinstance(folds_value, (list, tuple, dict)):
+
+    fold_count = len(folds_value)
+
+else:
+
+    fold_count = int(folds_value)
 
 st.write(
     f"Evaluasi menggunakan **{fold_count} fold "
-    "expanding rolling-origin**. "
+    "expanding rolling-origin**."
+)
+
+st.write(
     "Periode validasi berlangsung Januari–Mei 2024."
 )
 
@@ -1506,32 +1773,40 @@ st.write(
 )
 
 
-# ---------- Limitations ----------
+# LIMITATIONS
 
-st.markdown("### Keterbatasan")
+st.markdown("### Keterbatasan Model")
 
-for limitation in metadata.get("limitations", []):
+limitations = metadata.get("limitations", [])
 
-    st.markdown(
-        f"- {limitation}"
-    )
+if limitations:
+
+    for limitation in limitations:
+
+        st.markdown(f"- {limitation}")
+
+else:
+
+    st.info("Informasi keterbatasan belum tersedia dalam metadata.")
 
 st.info(
-    "Angka performa di atas merupakan hasil validasi "
-    "rolling-origin yang juga digunakan selama proses "
-    "pemilihan model. Angka tersebut bukan hasil "
-    "pengujian pada holdout independen."
+    "Angka performa merupakan hasil validasi rolling-origin "
+    "yang digunakan selama proses pemilihan model. "
+    "Angka tersebut bukan hasil pengujian pada holdout independen."
 )
 
 
 # ============================================================
-# FOOTER
+# 11. FOOTER
 # ============================================================
 
 st.divider()
 
-st.caption(
-    "PanganPulse · Academic Machine Learning Project · "
-    "Prediksi historis H+30 · "
-    "Sumber dan satuan mengikuti dataset penelitian."
-)
+st.markdown("""
+<div class="footer">
+🌾 <b>PanganPulse</b><br>
+Food Price Forecasting Dashboard<br>
+Academic Machine Learning Project<br>
+Prediksi historis H+30 · Sumber data mengikuti dataset penelitian
+</div>
+""", unsafe_allow_html=True)
