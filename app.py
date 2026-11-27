@@ -788,7 +788,7 @@ st.markdown("""
     </div>
 </div>
 """, unsafe_allow_html=True)
-)
+
 
 show_historical_warning(metadata)
 
