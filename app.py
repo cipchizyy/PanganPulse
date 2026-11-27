@@ -771,8 +771,7 @@ st.markdown(
 # HERO SECTION
 # ============================================================
 
-st.markdown(
-    dedent("""
+st.markdown("""
 <div class="hero">
     <div class="hero-kicker">
         Indonesian Food Price Analysis
@@ -788,8 +787,7 @@ st.markdown(
         harga tiga komoditas utama di Indonesia.
     </div>
 </div>
-    """),
-    unsafe_allow_html=True
+""", unsafe_allow_html=True)
 )
 
 show_historical_warning(metadata)
