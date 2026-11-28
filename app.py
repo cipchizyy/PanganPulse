@@ -4,6 +4,7 @@ import json
 import warnings
 import html as html_lib
 from pathlib import Path
+from urllib.request import Request, urlopen
 
 import joblib
 import numpy as np
@@ -1350,6 +1351,184 @@ with st.sidebar:
     st.caption("Academic project · Machine Learning")
 
 
+# ---------- Indonesia province map helpers ----------
+INDONESIA_PROVINCE_GEOJSON_URL = (
+    "https://raw.githubusercontent.com/arsofyan7/Indonesia-GeoJSON/"
+    "master/indonesia-province.geojson"
+)
+
+PROVINCE_TO_GEOJSON = {
+    "DKI Jakarta": "Jakarta Raya",
+    "DI Yogyakarta": "Yogyakarta",
+    "Kepulauan Bangka Belitung": "Bangka Belitung",
+}
+
+STATUS_COLORS = {
+    "Turun": "#F6C445",       # kuning
+    "Naik": "#E74C3C",        # merah untuk prediksi naik
+    "Stabil": "#8BC34A",      # hijau
+    "Tidak tersedia": "#D8D2C8",
+}
+
+STATUS_CODES = {
+    "Turun": 0,
+    "Naik": 1,
+    "Stabil": 2,
+    "Tidak tersedia": 3,
+}
+
+
+@st.cache_data(ttl=86400, show_spinner="Memuat batas wilayah provinsi Indonesia...")
+def load_indonesia_province_geojson():
+    """Load simplified 34-province boundaries used by the study dataset."""
+    local_candidates = [
+        BASE_DIR / "indonesia-province.geojson",
+        BASE_DIR / "assets" / "indonesia-province.geojson",
+    ]
+
+    for local_path in local_candidates:
+        if local_path.exists():
+            with local_path.open("r", encoding="utf-8") as file:
+                geojson = json.load(file)
+            break
+    else:
+        request = Request(
+            INDONESIA_PROVINCE_GEOJSON_URL,
+            headers={"User-Agent": "PanganPulse/1.0"},
+        )
+        with urlopen(request, timeout=25) as response:
+            geojson = json.loads(response.read().decode("utf-8"))
+
+    if geojson.get("type") != "FeatureCollection":
+        raise ValueError("Format GeoJSON batas provinsi tidak valid.")
+
+    if not geojson.get("features"):
+        raise ValueError("GeoJSON tidak berisi geometri provinsi.")
+
+    return geojson
+
+
+def normalize_prediction_status(value) -> str:
+    """Normalize model labels into the three requested map categories."""
+    text = str(value).strip().lower()
+
+    if "turun" in text:
+        return "Turun"
+    if "naik" in text:
+        return "Naik"
+    if "stabil" in text or "relatif" in text:
+        return "Stabil"
+
+    return "Tidak tersedia"
+
+
+def build_province_status_map(geojson: dict, commodity_data: pd.DataFrame):
+    """Create a simple Indonesia choropleth with province + status hover only."""
+    status_by_geo_name = {}
+    original_province_by_geo_name = {}
+
+    for _, row in commodity_data.iterrows():
+        province_name = str(row["Province"]).strip()
+        geo_name = PROVINCE_TO_GEOJSON.get(province_name, province_name)
+
+        status_by_geo_name[geo_name] = normalize_prediction_status(
+            row["Pred_Kelas_H30"]
+        )
+        original_province_by_geo_name[geo_name] = province_name
+
+    map_locations = []
+    map_status_codes = []
+    map_customdata = []
+
+    for feature in geojson["features"]:
+        geo_name = feature.get("properties", {}).get("NAME_1")
+        if not geo_name:
+            continue
+
+        status = status_by_geo_name.get(geo_name, "Tidak tersedia")
+        province_label = original_province_by_geo_name.get(geo_name, geo_name)
+
+        map_locations.append(geo_name)
+        map_status_codes.append(STATUS_CODES[status])
+        map_customdata.append([province_label, status])
+
+    if not map_locations:
+        raise ValueError(
+            "Nama provinsi pada GeoJSON tidak dapat dibaca. "
+            "Pastikan properti NAME_1 tersedia."
+        )
+
+    customdata = np.asarray(map_customdata, dtype=object)
+
+    # Discrete color bands: 0=Turun, 1=Naik, 2=Stabil, 3=Tidak tersedia.
+    colorscale = [
+        [0.0000, STATUS_COLORS["Turun"]],
+        [0.1666, STATUS_COLORS["Turun"]],
+        [0.1667, STATUS_COLORS["Naik"]],
+        [0.5000, STATUS_COLORS["Naik"]],
+        [0.5001, STATUS_COLORS["Stabil"]],
+        [0.8333, STATUS_COLORS["Stabil"]],
+        [0.8334, STATUS_COLORS["Tidak tersedia"]],
+        [1.0000, STATUS_COLORS["Tidak tersedia"]],
+    ]
+
+    fig = go.Figure(
+        go.Choropleth(
+            geojson=geojson,
+            featureidkey="properties.NAME_1",
+            locations=map_locations,
+            z=map_status_codes,
+            zmin=0,
+            zmax=3,
+            colorscale=colorscale,
+            showscale=False,
+            marker=dict(
+                line=dict(
+                    color="#FFF9EC",
+                    width=0.85,
+                )
+            ),
+            customdata=customdata,
+            hovertemplate=(
+                "<b>%{customdata[0]}</b><br>"
+                "Status prediksi: %{customdata[1]}"
+                "<extra></extra>"
+            ),
+            name="Status prediksi",
+        )
+    )
+
+    fig.update_geos(
+        fitbounds="locations",
+        visible=False,
+        projection_type="mercator",
+        bgcolor="rgba(0,0,0,0)",
+        showframe=False,
+        showcountries=False,
+        showcoastlines=False,
+        showland=False,
+    )
+
+    fig.update_layout(
+        height=570,
+        margin=dict(l=5, r=5, t=8, b=5),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        hoverlabel=dict(
+            bgcolor="#3B2F2F",
+            bordercolor="#F6C445",
+            font=dict(
+                color="#FFF3D6",
+                family="Poppins, sans-serif",
+                size=13,
+            ),
+        ),
+        dragmode=False,
+    )
+
+    return fig, map_customdata
+
+
 # ---------- Dashboard ----------
 if page == "Dashboard":
     render_html_block("""
@@ -1607,8 +1786,8 @@ elif page == "Prediksi H+30":
 # ---------- Province comparison ----------
 elif page == "Perbandingan Provinsi":
     render_header(
-        "Perbandingan Antarprovinsi",
-        "Bandingkan harga terakhir dan estimasi harga H+30 untuk satu komoditas pada seluruh provinsi yang tersedia.",
+        "Peta Status Prediksi Provinsi",
+        "Lihat arah prediksi harga H+30 untuk setiap provinsi berdasarkan komoditas yang dipilih.",
     )
     show_historical_warning(metadata)
 
@@ -1623,98 +1802,76 @@ elif page == "Perbandingan Provinsi":
         predictions["Commodity"] == commodity
     ].copy()
 
-    sort_option = st.selectbox(
-        "Urutkan berdasarkan",
-        [
-            "Prediksi harga tertinggi",
-            "Prediksi harga terendah",
-            "Persentase kenaikan tertinggi",
-            "Persentase penurunan terbesar",
-            "Nama provinsi",
-        ],
+    render_html_block("""
+        <div class="section-kicker">Indonesia map overview</div>
+        <div class="section-title">Status prediksi per provinsi</div>
+        <div class="section-subtitle">
+            Arahkan kursor ke salah satu provinsi untuk melihat nama wilayah dan status prediksinya.
+        </div>
+    """)
+
+    legend_items = [
+        ("Turun", STATUS_COLORS["Turun"]),
+        ("Naik", STATUS_COLORS["Naik"]),
+        ("Stabil", STATUS_COLORS["Stabil"]),
+    ]
+    if comp["Province"].nunique() < 34:
+        legend_items.append(("Tidak tersedia", STATUS_COLORS["Tidak tersedia"]))
+
+    legend_html = "".join(
+        f'<span style="display:inline-flex;align-items:center;gap:8px;'
+        f'padding:7px 12px;border:1px solid rgba(59,47,47,.10);'
+        f'border-radius:999px;background:#FFFCF4;color:#3B2F2F;'
+        f'font-size:13px;font-weight:600;">'
+        f'<span style="width:11px;height:11px;border-radius:4px;'
+        f'background:{color};display:inline-block;"></span>{label}</span>'
+        for label, color in legend_items
     )
 
-    if sort_option == "Prediksi harga tertinggi":
-        comp = comp.sort_values("Pred_Harga_H30", ascending=False)
-    elif sort_option == "Prediksi harga terendah":
-        comp = comp.sort_values("Pred_Harga_H30", ascending=True)
-    elif sort_option == "Persentase kenaikan tertinggi":
-        comp = comp.sort_values("Perubahan_Persen", ascending=False)
-    elif sort_option == "Persentase penurunan terbesar":
-        comp = comp.sort_values("Perubahan_Persen", ascending=True)
-    else:
-        comp = comp.sort_values("Province")
-
-    table = comp[
-        [
-            "Province",
-            "current_price",
-            "Pred_Harga_H30",
-            "Perubahan_Persen",
-            "Pred_Kelas_H30",
-        ]
-    ].rename(
-        columns={
-            "Province": "Provinsi",
-            "current_price": "Harga terakhir",
-            "Pred_Harga_H30": "Prediksi H+30",
-            "Perubahan_Persen": "Perubahan (%)",
-            "Pred_Kelas_H30": "Klasifikasi",
-        }
+    render_html_block(
+        '<div style="display:flex;flex-wrap:wrap;gap:9px;margin:0 0 14px;">'
+        + legend_html
+        + '</div>'
     )
 
-    st.markdown(f"### {commodity}")
-    st.caption(f"{len(comp)} seri provinsi tersedia untuk komoditas ini.")
-
-    fig = go.Figure()
-    fig.add_trace(
-        go.Bar(
-            x=comp["Province"],
-            y=comp["current_price"],
-            name="Harga terakhir",
-            marker_color="#F6C445",
+    try:
+        indonesia_geojson = load_indonesia_province_geojson()
+        map_fig, map_customdata = build_province_status_map(
+            indonesia_geojson,
+            comp,
         )
-    )
-    fig.add_trace(
-        go.Bar(
-            x=comp["Province"],
-            y=comp["Pred_Harga_H30"],
-            name="Prediksi H+30",
-            marker_color="#F05A28",
+
+        st.plotly_chart(
+            map_fig,
+            use_container_width=True,
+            config={
+                "displayModeBar": False,
+                "scrollZoom": False,
+                "responsive": True,
+            },
         )
-    )
-    fig.update_layout(
-        barmode="group",
-        height=460,
-        margin=dict(l=10, r=10, t=45, b=10),
-        xaxis_title=None,
-        yaxis_title="Nilai harga (satuan dataset)",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
-    )
-    style_plotly(fig, 460)
-    add_grouped_bar_replay(
-        fig,
-        comp["Province"],
-        comp["current_price"],
-        comp["Pred_Harga_H30"],
-    )
-    st.plotly_chart(fig, use_container_width=True)
 
-    st.markdown("### Tabel hasil")
-    display_table = table.round(
-        {"Harga terakhir": 1, "Prediksi H+30": 1, "Perubahan (%)": 2}
-    ).copy()
-    display_table["Harga terakhir"] = display_table["Harga terakhir"].map(lambda v: format_number(v, 1))
-    display_table["Prediksi H+30"] = display_table["Prediksi H+30"].map(lambda v: format_number(v, 1))
-    display_table["Perubahan (%)"] = display_table["Perubahan (%)"].map(lambda v: f"{v:+.2f}%")
-    render_html_table(display_table)
+        unavailable_count = sum(
+            1 for item in map_customdata if item[1] == "Tidak tersedia"
+        )
+        if unavailable_count:
+            st.caption(
+                f"{unavailable_count} provinsi tidak memiliki hasil prediksi "
+                "untuk komoditas ini dan ditampilkan dengan warna abu-abu."
+            )
 
-    csv_data = comp.to_csv(index=False).encode("utf-8-sig")
-    st.download_button(
-        "⬇️ Unduh hasil perbandingan (CSV)",
-        data=csv_data,
-        file_name=f"panganpulse_{commodity.lower().replace(' ', '_')}_h30.csv",
-        mime="text/csv",
+    except Exception as exc:
+        st.error(
+            "Peta belum dapat dimuat. Pastikan aplikasi memiliki akses internet "
+            "untuk mengambil batas wilayah GeoJSON Indonesia."
+        )
+        st.caption(f"Detail teknis: {exc}")
+
+    st.caption(
+        "Warna menunjukkan hasil klasifikasi prediksi H+30: "
+        "kuning = turun, merah = naik, dan hijau = stabil. "
+        "Peta mengikuti cakupan 34 provinsi pada dataset penelitian. "
+        "Sumber batas wilayah: arsofyan7/Indonesia-GeoJSON."
     )
 
 
