@@ -668,3 +668,2108 @@ def get_class_label(value, labels: dict) -> str:
         key = str(value)
 
     return labels.get(key, f"Kelas {key}")
+    # ============================================================
+# LOAD DATA AND MODELS
+# ============================================================
+
+@st.cache_resource(show_spinner="Memuat model dan data penelitian...")
+def load_assets():
+
+    required_files = [
+        "regression_model.joblib",
+        "classification_model.joblib",
+        "model_metadata.json",
+        "eligible_series.csv",
+        "latest_history.csv",
+        "latest_features.csv",
+        "external_features_daily.csv",
+    ]
+
+    missing = [
+        name for name in required_files
+        if not (ARTIFACT_DIR / name).exists()
+    ]
+
+    if missing:
+        raise FileNotFoundError(
+            "Artefak berikut belum ditemukan: " + ", ".join(missing)
+        )
+
+    metadata = json.loads(
+        (ARTIFACT_DIR / "model_metadata.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    regression_model = joblib.load(
+        ARTIFACT_DIR / "regression_model.joblib"
+    )
+
+    classification_model = joblib.load(
+        ARTIFACT_DIR / "classification_model.joblib"
+    )
+
+    eligible = pd.read_csv(
+        ARTIFACT_DIR / "eligible_series.csv"
+    )
+
+    history = pd.read_csv(
+        ARTIFACT_DIR / "latest_history.csv",
+        parse_dates=["Date"],
+    )
+
+    latest_features = pd.read_csv(
+        ARTIFACT_DIR / "latest_features.csv",
+        parse_dates=["Date"],
+    )
+
+    external_daily = pd.read_csv(
+        ARTIFACT_DIR / "external_features_daily.csv",
+        parse_dates=["Date"],
+    )
+
+    external_return_cols = [
+        "wheat_return_30",
+        "palm_oil_return_30",
+        "sugar_return_30",
+        "usdidr_return_30",
+        "crude_oil_return_30",
+    ]
+
+    missing_external = [
+        col for col in external_return_cols
+        if col not in external_daily.columns
+    ]
+
+    if missing_external:
+        raise ValueError(
+            "Kolom faktor eksternal tidak lengkap: "
+            + ", ".join(missing_external)
+        )
+
+    latest_features = latest_features.merge(
+        external_daily[["Date"] + external_return_cols],
+        on="Date",
+        how="left",
+        validate="many_to_one",
+    )
+
+    # Mengikuti urutan fitur pada metadata model.
+    reg_features = metadata["regression"]["features"]
+    cls_features = metadata["classification"]["features"]
+
+    for frame_name, frame, features in [
+        ("latest_features", latest_features, reg_features),
+        ("latest_features", latest_features, cls_features),
+    ]:
+
+        missing_columns = [
+            c for c in features
+            if c not in frame.columns
+        ]
+
+        if missing_columns:
+            raise ValueError(
+                f"Kolom fitur {frame_name} tidak lengkap: "
+                f"{missing_columns}"
+            )
+
+    # Validasi satu record untuk setiap pasangan komoditas-provinsi.
+    key_cols = ["Commodity", "Province"]
+
+    if latest_features.duplicated(key_cols).any():
+        raise ValueError(
+            "latest_features.csv memiliki kombinasi "
+            "komoditas-provinsi duplikat."
+        )
+
+    # Input model.
+    reg_input = latest_features[reg_features].copy()
+    cls_input = latest_features[cls_features].copy()
+
+    # Prediksi.
+    predicted_price = regression_model.predict(reg_input)
+    predicted_class = classification_model.predict(cls_input)
+
+    if len(predicted_price) != len(latest_features):
+        raise ValueError(
+            "Jumlah prediksi regresi tidak sesuai jumlah seri."
+        )
+
+    if len(predicted_class) != len(latest_features):
+        raise ValueError(
+            "Jumlah prediksi klasifikasi tidak sesuai jumlah seri."
+        )
+
+    predictions = latest_features[
+        ["Date", "Commodity", "Province", "current_price"]
+        + external_return_cols
+    ].copy()
+
+    predictions["TargetDate"] = (
+        pd.to_datetime(predictions["Date"])
+        + pd.to_timedelta(
+            int(metadata["horizon_days"]),
+            unit="D"
+        )
+    )
+
+    predictions["Pred_Harga_H30"] = np.asarray(
+        predicted_price,
+        dtype=float
+    )
+
+    labels = metadata["target_classification"]["labels"]
+
+    predictions["Pred_Kelas_H30"] = [
+        get_class_label(value, labels)
+        for value in predicted_class
+    ]
+
+    predictions["Perubahan_Persen"] = np.where(
+        predictions["current_price"].to_numpy(dtype=float) != 0,
+        (
+            predictions["Pred_Harga_H30"].to_numpy(dtype=float)
+            / predictions["current_price"].to_numpy(dtype=float)
+            - 1
+        ) * 100,
+        np.nan,
+    )
+
+    # Probabilitas klasifikasi jika tersedia.
+    if hasattr(classification_model, "predict_proba"):
+
+        probabilities = classification_model.predict_proba(
+            cls_input
+        )
+
+        classes = getattr(
+            classification_model,
+            "classes_",
+            range(probabilities.shape[1])
+        )
+
+        for idx, class_value in enumerate(classes):
+
+            label = get_class_label(
+                class_value,
+                labels
+            )
+
+            predictions[f"Prob_{label}"] = probabilities[:, idx]
+
+    history["Date"] = pd.to_datetime(history["Date"])
+    latest_features["Date"] = pd.to_datetime(latest_features["Date"])
+    predictions["Date"] = pd.to_datetime(predictions["Date"])
+    predictions["TargetDate"] = pd.to_datetime(predictions["TargetDate"])
+
+    return (
+        metadata,
+        regression_model,
+        classification_model,
+        eligible,
+        history,
+        latest_features,
+        predictions,
+    )
+
+
+# ============================================================
+# GENERAL PREDICTION HELPERS
+# ============================================================
+
+def show_historical_warning(metadata: dict):
+
+    last_date = pd.Timestamp(
+        metadata["latest_data_date"]
+    )
+
+    target_date = last_date + pd.Timedelta(
+        days=int(metadata["horizon_days"])
+    )
+
+    st.warning(
+        f"**Catatan periode data:** dataset berakhir pada "
+        f"{format_date(last_date)}. Prediksi H+30 pada aplikasi ini "
+        f"merupakan simulasi historis dengan target "
+        f"{format_date(target_date)}, "
+        "bukan prakiraan harga terkini tahun 2026. "
+        "Satuan harga mengikuti dataset sumber dan belum diverifikasi."
+    )
+
+
+def prediction_row(
+    predictions: pd.DataFrame,
+    commodity: str,
+    province: str
+):
+
+    selected = predictions[
+        (predictions["Commodity"] == commodity)
+        & (predictions["Province"] == province)
+    ]
+
+    if selected.empty:
+        return None
+
+    return selected.iloc[0]
+
+
+# ============================================================
+# HISTORICAL PRICE CHART
+# ============================================================
+
+def make_history_chart(
+    history: pd.DataFrame,
+    forecast_row: pd.Series
+):
+
+    hist = history[
+        (history["Commodity"] == forecast_row["Commodity"])
+        & (history["Province"] == forecast_row["Province"])
+    ].sort_values("Date")
+
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Scatter(
+            x=hist["Date"],
+            y=hist["Price"],
+            mode="lines",
+            name="Harga historis",
+            line=dict(
+                color="#F05A28",
+                width=3.2,
+                shape="spline"
+            ),
+            hovertemplate=(
+                "%{x|%d %b %Y}<br>"
+                "Harga: %{y:,.1f}<extra></extra>"
+            ),
+        )
+    )
+
+    last_date = pd.Timestamp(forecast_row["Date"])
+    target_date = pd.Timestamp(forecast_row["TargetDate"])
+
+    last_price = float(forecast_row["current_price"])
+    predicted_price = float(forecast_row["Pred_Harga_H30"])
+
+    # Garis penghubung hanya menghubungkan harga terakhir
+    # dengan titik target H+30.
+    # Bukan prediksi harga harian.
+    fig.add_trace(
+        go.Scatter(
+            x=[last_date, target_date],
+            y=[last_price, predicted_price],
+            mode="lines",
+            name="Penghubung ke titik H+30",
+            line=dict(
+                color="#8BC34A",
+                width=2.5,
+                dash="dash"
+            ),
+            hoverinfo="skip",
+        )
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=[target_date],
+            y=[predicted_price],
+            mode="markers",
+            name="Prediksi H+30",
+            marker=dict(
+                color="#F6C445",
+                line=dict(
+                    color="#3B2F2F",
+                    width=1.2
+                ),
+                size=14,
+                symbol="diamond",
+            ),
+            hovertemplate=(
+                "%{x|%d %b %Y}<br>"
+                "Prediksi: %{y:,.1f}<extra></extra>"
+            ),
+        )
+    )
+
+    fig.update_layout(
+        height=410,
+        margin=dict(l=10, r=10, t=45, b=10),
+        hovermode="x unified",
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            x=0
+        ),
+        xaxis_title=None,
+        yaxis_title="Nilai harga (satuan dataset)",
+    )
+
+    style_plotly(fig, 410)
+
+    add_line_replay(
+        fig,
+        hist["Date"],
+        hist["Price"],
+        trace_index=0
+    )
+
+    return fig
+
+
+# ============================================================
+# EXTERNAL FACTOR CONFIGURATION
+# ============================================================
+
+FACTOR_TREND_THRESHOLD_PCT = 1.0
+
+EXTERNAL_FACTOR_CONFIG = {
+
+    "Minyak Goreng Kemasan Sederhana": [
+
+        (
+            "palm_oil_return_30",
+            "Harga minyak sawit global",
+            "Bahan baku utama minyak goreng; kenaikan dapat memberi tekanan pada biaya bahan baku.",
+            True,
+        ),
+
+        (
+            "crude_oil_return_30",
+            "Harga minyak mentah WTI",
+            "Indikator biaya energi dan transportasi; pengaruhnya bersifat tidak langsung.",
+            True,
+        ),
+
+        (
+            "usdidr_return_30",
+            "Kurs USD/IDR",
+            "Kenaikan USD/IDR menunjukkan pelemahan rupiah dan dapat meningkatkan biaya input impor.",
+            True,
+        ),
+    ],
+
+    "Beras Medium": [
+
+        (
+            "usdidr_return_30",
+            "Kurs USD/IDR",
+            "Dapat memengaruhi biaya input impor dan distribusi; bukan penentu tunggal harga beras.",
+            True,
+        ),
+
+        (
+            "crude_oil_return_30",
+            "Harga minyak mentah WTI",
+            "Indikator biaya energi dan transportasi yang dapat memengaruhi distribusi.",
+            True,
+        ),
+
+        (
+            "wheat_return_30",
+            "Harga gandum global",
+            "Hanya indikator pasar serealia global; bukan harga beras atau bahan baku beras secara langsung.",
+            False,
+        ),
+    ],
+
+    "Cabai Rawit Merah": [
+
+        (
+            "usdidr_return_30",
+            "Kurs USD/IDR",
+            "Dapat memengaruhi biaya input pertanian yang berasal dari impor.",
+            True,
+        ),
+
+        (
+            "crude_oil_return_30",
+            "Harga minyak mentah WTI",
+            "Indikator biaya energi dan transportasi hasil panen.",
+            True,
+        ),
+    ],
+}
+
+
+# ============================================================
+# EXTERNAL FACTOR INTERPRETATION
+# ============================================================
+
+def build_external_factor_explanation(
+    commodity: str,
+    predicted_class: str,
+    row: pd.Series,
+):
+
+    definitions = EXTERNAL_FACTOR_CONFIG.get(
+        commodity,
+        []
+    )
+
+    factor_rows = []
+
+    upward_pressure = 0
+    downward_pressure = 0
+
+    for feature, factor_name, influence, counts_as_pressure in definitions:
+
+        value = row.get(feature, np.nan)
+
+        if pd.isna(value):
+
+            status = "Tidak tersedia"
+
+            detail = (
+                "Nilai faktor eksternal tidak tersedia "
+                "pada tanggal pengamatan."
+            )
+
+        else:
+
+            value = float(value)
+
+            if feature == "wheat_return_30":
+
+                if value >= FACTOR_TREND_THRESHOLD_PCT:
+                    status = "Naik"
+
+                elif value <= -FACTOR_TREND_THRESHOLD_PCT:
+                    status = "Turun"
+
+                else:
+                    status = "Relatif stabil"
+
+                detail = (
+                    "Perubahan ini hanya menggambarkan pasar gandum global; "
+                    "tidak dapat dibaca sebagai perubahan harga beras secara langsung."
+                )
+
+            elif value >= FACTOR_TREND_THRESHOLD_PCT:
+
+                status = "Naik"
+
+                if feature == "usdidr_return_30":
+
+                    detail = (
+                        "Rupiah melemah; berpotensi menambah "
+                        "tekanan biaya terkait impor."
+                    )
+
+                else:
+
+                    detail = (
+                        "Kenaikan dapat menambah tekanan biaya "
+                        "pada jalur yang relevan."
+                    )
+
+                if counts_as_pressure:
+                    upward_pressure += 1
+
+            elif value <= -FACTOR_TREND_THRESHOLD_PCT:
+
+                status = "Turun"
+
+                if feature == "usdidr_return_30":
+
+                    detail = (
+                        "Rupiah menguat; berpotensi mengurangi "
+                        "tekanan biaya terkait impor."
+                    )
+
+                else:
+
+                    detail = (
+                        "Penurunan dapat mengurangi tekanan biaya "
+                        "pada jalur yang relevan."
+                    )
+
+                if counts_as_pressure:
+                    downward_pressure += 1
+
+            else:
+
+                status = "Relatif stabil"
+
+                detail = (
+                    "Perubahannya belum melewati ambang "
+                    "interpretasi ±1%."
+                )
+
+        factor_rows.append(
+            {
+                "Faktor eksternal": factor_name,
+
+                "Perubahan 30 hari": (
+                    f"{float(value):+.2f}%"
+                    if pd.notna(value)
+                    else "—"
+                ),
+
+                "Kondisi": status,
+
+                "Potensi pengaruh": influence,
+
+                "Keterangan": detail,
+            }
+        )
+
+    # --------------------------------------------------------
+    # Ringkasan interpretasi berdasarkan klasifikasi
+    # --------------------------------------------------------
+
+    if predicted_class == "Naik":
+
+        if upward_pressure > downward_pressure:
+
+            summary = (
+                "Prediksi klasifikasi menunjukkan kenaikan. "
+                "Beberapa indikator biaya eksternal juga bergerak naik "
+                "sehingga berpotensi memberi tekanan kenaikan harga. "
+                "Hubungan ini merupakan indikasi, bukan bukti sebab-akibat."
+            )
+
+        elif upward_pressure == 0:
+
+            summary = (
+                "Prediksi klasifikasi menunjukkan kenaikan, tetapi "
+                "faktor eksternal yang tersedia belum menunjukkan "
+                "tekanan naik yang dominan. Perubahan dapat berkaitan "
+                "dengan pola harga lokal atau faktor lain yang tidak "
+                "tercakup dalam dataset."
+            )
+
+        else:
+
+            summary = (
+                "Prediksi klasifikasi menunjukkan kenaikan, tetapi "
+                "indikator eksternal bergerak beragam. Belum ada "
+                "satu arah tekanan biaya yang dominan."
+            )
+
+    elif predicted_class == "Turun":
+
+        if downward_pressure > upward_pressure:
+
+            summary = (
+                "Prediksi klasifikasi menunjukkan penurunan. "
+                "Beberapa indikator biaya eksternal juga bergerak turun "
+                "sehingga berpotensi mengurangi tekanan biaya. "
+                "Hubungan ini bukan bukti bahwa faktor tersebut "
+                "menyebabkan penurunan."
+            )
+
+        elif downward_pressure == 0:
+
+            summary = (
+                "Prediksi klasifikasi menunjukkan penurunan, tetapi "
+                "faktor eksternal yang tersedia belum menunjukkan "
+                "penurunan biaya yang dominan. Perubahan dapat "
+                "dipengaruhi pola harga lokal atau faktor lain."
+            )
+
+        else:
+
+            summary = (
+                "Prediksi klasifikasi menunjukkan penurunan, tetapi "
+                "indikator eksternal bergerak beragam sehingga "
+                "pengaruhnya belum menunjukkan arah yang jelas."
+            )
+
+    else:
+
+        summary = (
+            "Prediksi klasifikasi menunjukkan kondisi relatif stabil. "
+            "Indikator eksternal yang ditampilkan merupakan konteks "
+            "tambahan dan belum menunjukkan tekanan yang cukup "
+            "konsisten untuk menjelaskan perubahan harga."
+        )
+
+    # --------------------------------------------------------
+    # Keterbatasan interpretasi per komoditas
+    # --------------------------------------------------------
+
+    if commodity == "Cabai Rawit Merah":
+
+        limitation = (
+            "Catatan: dataset faktor eksternal tidak memuat curah hujan, "
+            "cuaca, luas panen, produksi, stok, maupun distribusi cabai. "
+            "Karena itu, faktor yang ditampilkan hanya proksi biaya input "
+            "dan transportasi, bukan penjelasan langsung atas harga cabai."
+        )
+
+    elif commodity == "Beras Medium":
+
+        limitation = (
+            "Catatan: dataset tidak memuat stok, produksi, panen, "
+            "maupun harga gabah/beras global. Gandum hanya indikator "
+            "pasar serealia yang lebih luas, bukan pengganti langsung harga beras."
+        )
+
+    else:
+
+        limitation = (
+            "Catatan: harga sawit global merupakan indikator yang paling "
+            "dekat dengan bahan baku minyak goreng dalam dataset ini. "
+            "Harga eceran lokal tetap dapat dipengaruhi kebijakan, "
+            "pasokan domestik, distribusi, dan margin perdagangan "
+            "yang tidak tercakup."
+        )
+
+    return (
+        pd.DataFrame(factor_rows),
+        summary,
+        limitation
+    )
+    # ============================================================
+# UI COMPONENTS
+# ============================================================
+
+def render_header(title: str, subtitle: str):
+    render_page_heading(title, subtitle)
+
+
+def render_page_heading(
+    title: str,
+    subtitle: str,
+    eyebrow: str = "PANGANPULSE ANALYTICS"
+):
+
+    safe_title = html_lib.escape(title)
+    safe_subtitle = html_lib.escape(subtitle)
+
+    st.markdown(
+        f"""
+        <div class="page-heading">
+            <span class="page-eyebrow">
+                ✦ {html_lib.escape(eyebrow)}
+            </span>
+
+            <h1>{safe_title}</h1>
+
+            <p>{safe_subtitle}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# ============================================================
+# HTML TABLE WITH HOVER EFFECT
+# ============================================================
+
+def render_html_table(
+    frame: pd.DataFrame,
+    max_rows: int | None = None
+):
+
+    view = (
+        frame.head(max_rows).copy()
+        if max_rows
+        else frame.copy()
+    )
+
+    headers = "".join(
+        f"<th>{html_lib.escape(str(column))}</th>"
+        for column in view.columns
+    )
+
+    body_rows = []
+
+    for _, row_data in view.iterrows():
+
+        cells = []
+
+        for value in row_data.tolist():
+
+            text = "—" if pd.isna(value) else str(value)
+
+            safe_value = html_lib.escape(text)
+
+            cell_class = ""
+            stripped = text.strip()
+
+            if stripped.startswith("+"):
+                cell_class = "pp-positive"
+
+            elif stripped.startswith("-"):
+                cell_class = "pp-negative"
+
+            elif stripped.lower() in {"naik", "tinggi"}:
+                cell_class = "pp-negative"
+
+            elif stripped.lower() in {"turun", "rendah"}:
+                cell_class = "pp-positive"
+
+            elif stripped.lower() in {
+                "stabil",
+                "sedang",
+                "relatif stabil"
+            }:
+                cell_class = "pp-neutral"
+
+            cells.append(
+                f'<td class="{cell_class}">{safe_value}</td>'
+            )
+
+        body_rows.append(
+            "<tr>" + "".join(cells) + "</tr>"
+        )
+
+    markup = (
+        '<div class="pp-table-wrap">'
+        '<table class="pp-table">'
+        f"<thead><tr>{headers}</tr></thead>"
+        f"<tbody>{''.join(body_rows)}</tbody>"
+        "</table>"
+        "</div>"
+    )
+
+    st.markdown(
+        markup,
+        unsafe_allow_html=True
+    )
+
+
+# ============================================================
+# PLOTLY VISUAL STYLE
+# ============================================================
+
+def style_plotly(
+    fig,
+    height: int | None = None
+):
+
+    fig.update_layout(
+        font=dict(
+            family="Poppins, Plus Jakarta Sans, sans-serif",
+            color="#3B2F2F",
+            size=12
+        ),
+
+        paper_bgcolor="rgba(0,0,0,0)",
+
+        plot_bgcolor="rgba(0,0,0,0)",
+
+        hoverlabel=dict(
+            bgcolor="#3B2F2F",
+            bordercolor="#F6C445",
+            font=dict(
+                color="#FFF3D6",
+                family="Poppins, sans-serif",
+                size=12
+            ),
+        ),
+
+        legend=dict(
+            bgcolor="rgba(255,252,244,.72)",
+            bordercolor="rgba(59,47,47,.08)",
+            borderwidth=1,
+            font=dict(
+                color="#3B2F2F",
+                size=11
+            ),
+        ),
+
+        transition=dict(
+            duration=550,
+            easing="cubic-in-out"
+        ),
+
+        colorway=[
+            "#F05A28",
+            "#8BC34A",
+            "#F6C445",
+            "#3B2F2F"
+        ],
+    )
+
+    if height:
+        fig.update_layout(height=height)
+
+    fig.update_xaxes(
+        showgrid=False,
+        zeroline=False,
+        linecolor="rgba(59,47,47,.14)",
+        tickfont=dict(
+            color="#78685D",
+            size=10
+        ),
+        title_font=dict(
+            color="#3B2F2F"
+        ),
+    )
+
+    fig.update_yaxes(
+        gridcolor="rgba(59,47,47,.09)",
+        zeroline=False,
+        tickfont=dict(
+            color="#78685D",
+            size=10
+        ),
+        title_font=dict(
+            color="#3B2F2F"
+        ),
+    )
+
+    return fig
+
+
+# ============================================================
+# LINE CHART ANIMATION
+# ============================================================
+
+def add_line_replay(
+    fig,
+    x_values,
+    y_values,
+    trace_index: int = 0
+):
+
+    x_values = list(x_values)
+    y_values = list(y_values)
+
+    if len(x_values) < 3:
+        return fig
+
+    frame_count = min(
+        24,
+        len(x_values) - 1
+    )
+
+    steps = np.unique(
+        np.linspace(
+            2,
+            len(x_values),
+            frame_count,
+            dtype=int
+        )
+    )
+
+    frames = []
+
+    for step in steps:
+
+        frames.append(
+            go.Frame(
+                name=f"line-{step}",
+
+                data=[
+                    go.Scatter(
+                        x=x_values[:step],
+                        y=y_values[:step]
+                    )
+                ],
+
+                traces=[trace_index],
+            )
+        )
+
+    fig.frames = frames
+
+    fig.update_layout(
+        updatemenus=[
+            dict(
+                type="buttons",
+                direction="left",
+                showactive=False,
+
+                x=1,
+                xanchor="right",
+
+                y=1.18,
+                yanchor="top",
+
+                bgcolor="#FFF3D6",
+                bordercolor="rgba(240,90,40,.24)",
+                borderwidth=1,
+
+                font=dict(
+                    color="#3B2F2F",
+                    size=10
+                ),
+
+                buttons=[
+
+                    dict(
+                        label="▶ Putar grafik",
+                        method="animate",
+
+                        args=[
+                            None,
+                            {
+                                "fromcurrent": False,
+
+                                "frame": {
+                                    "duration": 42,
+                                    "redraw": True
+                                },
+
+                                "transition": {
+                                    "duration": 35
+                                },
+                            },
+                        ],
+                    ),
+
+                    dict(
+                        label="Ⅱ Jeda",
+                        method="animate",
+
+                        args=[
+                            [None],
+                            {
+                                "mode": "immediate",
+
+                                "frame": {
+                                    "duration": 0,
+                                    "redraw": False
+                                },
+
+                                "transition": {
+                                    "duration": 0
+                                },
+                            },
+                        ],
+                    ),
+                ],
+            )
+        ]
+    )
+
+    return fig
+
+
+# ============================================================
+# GROUPED BAR CHART ANIMATION
+# ============================================================
+
+def add_grouped_bar_replay(
+    fig,
+    categories,
+    first_values,
+    second_values
+):
+
+    categories = list(categories)
+    first_values = list(first_values)
+    second_values = list(second_values)
+
+    if len(categories) < 3:
+        return fig
+
+    frame_count = min(
+        24,
+        len(categories) - 1
+    )
+
+    steps = np.unique(
+        np.linspace(
+            2,
+            len(categories),
+            frame_count,
+            dtype=int
+        )
+    )
+
+    frames = []
+
+    for step in steps:
+
+        frames.append(
+            go.Frame(
+                name=f"bars-{step}",
+
+                data=[
+
+                    go.Bar(
+                        x=categories[:step],
+                        y=first_values[:step]
+                    ),
+
+                    go.Bar(
+                        x=categories[:step],
+                        y=second_values[:step]
+                    ),
+
+                ],
+
+                traces=[0, 1],
+            )
+        )
+
+    fig.frames = frames
+
+    fig.update_layout(
+        updatemenus=[
+            dict(
+                type="buttons",
+                direction="left",
+                showactive=False,
+
+                x=1,
+                xanchor="right",
+
+                y=1.18,
+                yanchor="top",
+
+                bgcolor="#FFF3D6",
+                bordercolor="rgba(240,90,40,.24)",
+                borderwidth=1,
+
+                font=dict(
+                    color="#3B2F2F",
+                    size=10
+                ),
+
+                buttons=[
+
+                    dict(
+                        label="▶ Putar grafik",
+                        method="animate",
+
+                        args=[
+                            None,
+                            {
+                                "fromcurrent": False,
+
+                                "frame": {
+                                    "duration": 55,
+                                    "redraw": True
+                                },
+
+                                "transition": {
+                                    "duration": 45
+                                },
+                            },
+                        ],
+                    ),
+
+                    dict(
+                        label="Ⅱ Jeda",
+                        method="animate",
+
+                        args=[
+                            [None],
+                            {
+                                "mode": "immediate",
+
+                                "frame": {
+                                    "duration": 0,
+                                    "redraw": False
+                                },
+
+                                "transition": {
+                                    "duration": 0
+                                },
+                            },
+                        ],
+                    ),
+                ],
+            )
+        ]
+    )
+
+    return fig
+
+
+# ============================================================
+# LOAD DATA AND MODELS
+# ============================================================
+
+try:
+
+    (
+        metadata,
+        regression_model,
+        classification_model,
+        eligible,
+        history,
+        latest_features,
+        predictions,
+
+    ) = load_assets()
+
+except Exception as exc:
+
+    st.error(
+        "Aplikasi belum dapat memuat model atau data artefak."
+    )
+
+    st.exception(exc)
+
+    st.info(
+        "Pastikan folder artifacts tersedia dan install "
+        "requirements.txt dengan versi library yang sesuai."
+    )
+
+    st.stop()
+
+
+# ============================================================
+# SIDEBAR NAVIGATION
+# ============================================================
+
+with st.sidebar:
+
+    st.markdown(
+        """
+        <div class="brand-wrap">
+
+            <div class="brand-mark">
+                🌾
+            </div>
+
+            <div class="brand">
+                Pangan<span class="pulse">Pulse</span>
+            </div>
+
+            <div class="brand-sub">
+                PEMANTAUAN & PREDIKSI<br>
+                HARGA PANGAN NASIONAL
+            </div>
+
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("**MENU UTAMA**")
+
+    nav_labels = {
+
+        "🏡  Dashboard":
+            "Dashboard",
+
+        "📈  Prediksi Harga H+30":
+            "Prediksi H+30",
+
+        "🧭  Perbandingan Provinsi":
+            "Perbandingan Provinsi",
+
+        "🧠  Tentang Model":
+            "Tentang Model",
+    }
+
+    selected_nav = st.radio(
+        "NAVIGASI",
+        list(nav_labels.keys()),
+        label_visibility="collapsed",
+        key="pp_navigation",
+    )
+
+    page = nav_labels[selected_nav]
+
+    st.divider()
+
+    st.markdown("**RUANG LINGKUP**")
+
+    st.markdown(
+        f"""
+        <div class="sidebar-note">
+
+            <div>
+                🌱 <strong>3 komoditas</strong>
+            </div>
+
+            <div>
+                🗺️ <strong>{int(eligible['Province'].nunique())} provinsi</strong>
+            </div>
+
+            <div>
+                📊 <strong>{len(predictions)} seri data</strong>
+            </div>
+
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("**PERIODE DATA**")
+
+    st.caption(
+        format_date(metadata["latest_data_date"])
+    )
+
+    st.caption(
+        "Academic project · Machine Learning"
+    )
+    # ============================================================
+# DASHBOARD PAGE
+# ============================================================
+
+if page == "Dashboard":
+
+    st.markdown(
+        """
+        <div class="hero">
+
+            <div class="hero-kicker">
+                ✦ Indonesian food price intelligence
+            </div>
+
+            <div class="hero-title">
+                Pantau Harga. Pahami Prediksi. 🌾
+            </div>
+
+            <div class="hero-copy">
+                Kenali pergerakan harga pangan melalui data historis,
+                prediksi H+30, dan konteks faktor eksternal
+                untuk tiga komoditas penelitian.
+            </div>
+
+            <div class="hero-pill">
+                ● Data penelitian · 3 komoditas · Prediksi H+30
+            </div>
+
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    show_historical_warning(metadata)
+
+    provinces_count = int(
+        eligible["Province"].nunique()
+    )
+
+    commodities_count = int(
+        eligible["Commodity"].nunique()
+    )
+
+    last_date = pd.Timestamp(
+        metadata["latest_data_date"]
+    )
+
+    # KPI CARDS
+    c1, c2, c3, c4 = st.columns(4)
+
+    c1.metric(
+        "Komoditas",
+        commodities_count
+    )
+
+    c2.metric(
+        "Provinsi",
+        provinces_count
+    )
+
+    c3.metric(
+        "Seri tersedia",
+        len(eligible)
+    )
+
+    c4.metric(
+        "Horizon prediksi",
+        f"H+{metadata['horizon_days']}"
+    )
+
+    # HISTORICAL PRICE OVERVIEW
+    st.markdown(
+        """
+        <div class="section-kicker">
+            Market overview
+        </div>
+
+        <div class="section-title">
+            Gambaran harga historis
+        </div>
+
+        <div class="section-subtitle">
+            Pilih komoditas untuk melihat pergerakan
+            median harga antarprovinsi.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    commodity_options = sorted(
+        predictions["Commodity"].unique().tolist()
+    )
+
+    selected_commodity = st.selectbox(
+        "Pilih komoditas untuk melihat tren median antarprovinsi",
+        commodity_options,
+        key="dashboard_commodity",
+    )
+
+    selected_history = history[
+        history["Commodity"] == selected_commodity
+    ]
+
+    median_history = (
+        selected_history
+        .groupby("Date", as_index=False)["Price"]
+        .median()
+        .rename(
+            columns={
+                "Price": "Median harga antarprovinsi"
+            }
+        )
+    )
+
+    fig = px.line(
+        median_history,
+        x="Date",
+        y="Median harga antarprovinsi",
+        markers=False,
+        title=f"Median harga historis — {selected_commodity}",
+    )
+
+    fig.update_traces(
+        line_color="#F05A28",
+        line_width=3.2,
+        line_shape="spline",
+        fill="tozeroy",
+        fillcolor="rgba(240,90,40,.10)",
+        marker=dict(
+            size=5,
+            color="#F6C445",
+            line=dict(
+                color="#F05A28",
+                width=1
+            )
+        )
+    )
+
+    fig.update_layout(
+        height=390,
+        margin=dict(
+            l=10,
+            r=10,
+            t=50,
+            b=10
+        ),
+        xaxis_title=None,
+        yaxis_title="Nilai harga (satuan dataset)",
+    )
+
+    style_plotly(fig, 390)
+
+    add_line_replay(
+        fig,
+        median_history["Date"],
+        median_history["Median harga antarprovinsi"],
+        trace_index=0,
+    )
+
+    st.plotly_chart(
+        fig,
+        use_container_width=True
+    )
+
+    # FORECAST SUMMARY
+    st.markdown(
+        """
+        <div class="section-kicker">
+            Forecast snapshot
+        </div>
+
+        <div class="section-title">
+            Ringkasan prediksi H+30
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    summary = (
+        predictions
+        .groupby("Commodity")
+        .agg(
+            Seri_tersedia=("Province", "nunique"),
+
+            Median_harga_terakhir=(
+                "current_price",
+                "median"
+            ),
+
+            Median_prediksi_H30=(
+                "Pred_Harga_H30",
+                "median"
+            ),
+
+            Median_perubahan_persen=(
+                "Perubahan_Persen",
+                "median"
+            ),
+        )
+        .reset_index()
+    )
+
+    display_summary = summary.copy()
+
+    for col in [
+        "Median_harga_terakhir",
+        "Median_prediksi_H30",
+    ]:
+
+        display_summary[col] = (
+            display_summary[col]
+            .map(lambda x: format_number(x, 1))
+        )
+
+    display_summary["Median_perubahan_persen"] = (
+        display_summary["Median_perubahan_persen"]
+        .map(
+            lambda x: (
+                f"{x:+.2f}%"
+                if pd.notna(x)
+                else "—"
+            )
+        )
+    )
+
+    display_summary = display_summary.rename(
+        columns={
+
+            "Commodity":
+                "Komoditas",
+
+            "Seri_tersedia":
+                "Jumlah provinsi",
+
+            "Median_harga_terakhir":
+                "Median harga terakhir",
+
+            "Median_prediksi_H30":
+                "Median prediksi H+30",
+
+            "Median_perubahan_persen":
+                "Median perubahan",
+        }
+    )
+
+    render_html_table(display_summary)
+
+
+# ============================================================
+# PREDICTION PAGE
+# ============================================================
+
+elif page == "Prediksi H+30":
+
+    render_header(
+        "Prediksi Harga H+30",
+        "Pilih komoditas dan provinsi untuk melihat estimasi "
+        "harga 30 hari setelah tanggal data terakhir.",
+    )
+
+    show_historical_warning(metadata)
+
+    commodity_options = sorted(
+        predictions["Commodity"].unique().tolist()
+    )
+
+    commodity = st.selectbox(
+        "Komoditas",
+        commodity_options,
+        key="prediction_commodity",
+    )
+
+    province_options = sorted(
+        predictions.loc[
+            predictions["Commodity"] == commodity,
+            "Province"
+        ].unique().tolist()
+    )
+
+    province = st.selectbox(
+        "Provinsi",
+        province_options,
+        key="prediction_province",
+    )
+
+    row = prediction_row(
+        predictions,
+        commodity,
+        province
+    )
+
+    if row is None:
+
+        st.error(
+            "Seri komoditas-provinsi tidak tersedia "
+            "pada data penelitian."
+        )
+
+        st.stop()
+
+    # PREDICTION RESULT
+    st.markdown(
+        """
+        <div class="section-kicker">
+            Prediction result
+        </div>
+
+        <div class="section-title">
+            Hasil prediksi
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    m1, m2, m3 = st.columns(3)
+
+    m1.metric(
+        "Harga terakhir",
+        format_number(row["current_price"]),
+        help="Harga pada tanggal pengamatan terakhir.",
+    )
+
+    m2.metric(
+        "Prediksi harga H+30",
+        format_number(row["Pred_Harga_H30"]),
+        delta=(
+            f"{row['Perubahan_Persen']:+.2f}% "
+            "dari harga terakhir"
+        ),
+        help=(
+            "Estimasi harga tepat 30 hari "
+            "setelah tanggal pengamatan."
+        ),
+    )
+
+    m3.metric(
+        "Klasifikasi perubahan",
+        row["Pred_Kelas_H30"],
+        help=(
+            "Kategori berdasarkan perubahan harga H+30: "
+            "Turun, Stabil, atau Naik."
+        ),
+    )
+
+    st.caption(
+        f"Tanggal pengamatan: **{format_date(row['Date'])}**  ·  "
+        f"Tanggal target: **{format_date(row['TargetDate'])}**"
+    )
+
+    # HISTORICAL CHART
+    st.markdown(
+        "### Grafik harga historis dan titik prediksi"
+    )
+
+    st.plotly_chart(
+        make_history_chart(history, row),
+        use_container_width=True,
+    )
+
+    st.caption(
+        "Garis putus-putus hanya menghubungkan harga terakhir "
+        "dengan titik target H+30. Garis tersebut bukan prediksi "
+        "harga harian di antara kedua tanggal."
+    )
+
+    # CLASSIFICATION PROBABILITY
+    probability_cols = [
+        col for col in predictions.columns
+        if col.startswith("Prob_")
+    ]
+
+    if probability_cols:
+
+        st.markdown(
+            "### Probabilitas klasifikasi"
+        )
+
+        prob_values = []
+
+        for col in probability_cols:
+
+            label = col.replace("Prob_", "")
+
+            prob_values.append(
+                {
+                    "Kelas": label,
+                    "Probabilitas": float(row[col])
+                }
+            )
+
+        prob_df = pd.DataFrame(prob_values)
+
+        fig_prob = px.bar(
+            prob_df,
+            x="Kelas",
+            y="Probabilitas",
+            text=prob_df["Probabilitas"].map(
+                lambda x: f"{x:.1%}"
+            ),
+            color="Kelas",
+
+            color_discrete_map={
+                "Turun": "#F05A28",
+                "Stabil": "#F6C445",
+                "Naik": "#8BC34A",
+            },
+        )
+
+        fig_prob.update_traces(
+            marker_line_color="#FFF3D6",
+            marker_line_width=1.5,
+            marker_cornerradius=9,
+            textposition="outside",
+        )
+
+        fig_prob.update_layout(
+            showlegend=False,
+            height=300,
+            yaxis=dict(
+                tickformat=".0%",
+                range=[0, 1]
+            ),
+            margin=dict(
+                l=10,
+                r=10,
+                t=25,
+                b=10
+            ),
+        )
+
+        style_plotly(fig_prob, 300)
+
+        st.plotly_chart(
+            fig_prob,
+            use_container_width=True
+        )
+
+    # EXTERNAL FACTOR EXPLANATION
+    st.markdown(
+        """
+        <div class="section-kicker">
+            Market context
+        </div>
+
+        <div class="section-title">
+            Konteks faktor eksternal
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    factor_table, factor_summary, factor_limitation = (
+        build_external_factor_explanation(
+            commodity,
+            str(row["Pred_Kelas_H30"]),
+            row,
+        )
+    )
+
+    st.info(factor_summary)
+
+    if not factor_table.empty:
+
+        render_html_table(factor_table)
+
+    st.caption(
+        "Perubahan faktor dihitung dari return 30 hari terakhir "
+        "sebelum tanggal pengamatan. Faktor eksternal ini "
+        "ditampilkan sebagai konteks interpretasi dan tidak "
+        "menjadi input classifier final."
+    )
+
+    st.caption(factor_limitation)
+
+    # DETAIL DATA
+    with st.expander("Lihat detail data seri"):
+
+        series_history = history[
+            (history["Commodity"] == commodity)
+            & (history["Province"] == province)
+        ].sort_values(
+            "Date",
+            ascending=False
+        )
+
+        st.dataframe(
+            series_history.rename(
+                columns={
+                    "Date": "Tanggal",
+                    "Commodity": "Komoditas",
+                    "Province": "Provinsi",
+                    "Price": "Harga",
+                }
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+
+# ============================================================
+# PROVINCE COMPARISON PAGE
+# ============================================================
+
+elif page == "Perbandingan Provinsi":
+
+    render_header(
+        "Perbandingan Antarprovinsi",
+        "Bandingkan harga terakhir dan estimasi harga H+30 "
+        "untuk satu komoditas pada seluruh provinsi yang tersedia.",
+    )
+
+    show_historical_warning(metadata)
+
+    commodity_options = sorted(
+        predictions["Commodity"].unique().tolist()
+    )
+
+    commodity = st.selectbox(
+        "Pilih komoditas",
+        commodity_options,
+        key="comparison_commodity",
+    )
+
+    comp = predictions[
+        predictions["Commodity"] == commodity
+    ].copy()
+
+    sort_option = st.selectbox(
+        "Urutkan berdasarkan",
+        [
+            "Prediksi harga tertinggi",
+            "Prediksi harga terendah",
+            "Persentase kenaikan tertinggi",
+            "Persentase penurunan terbesar",
+            "Nama provinsi",
+        ],
+    )
+
+    if sort_option == "Prediksi harga tertinggi":
+
+        comp = comp.sort_values(
+            "Pred_Harga_H30",
+            ascending=False
+        )
+
+    elif sort_option == "Prediksi harga terendah":
+
+        comp = comp.sort_values(
+            "Pred_Harga_H30",
+            ascending=True
+        )
+
+    elif sort_option == "Persentase kenaikan tertinggi":
+
+        comp = comp.sort_values(
+            "Perubahan_Persen",
+            ascending=False
+        )
+
+    elif sort_option == "Persentase penurunan terbesar":
+
+        comp = comp.sort_values(
+            "Perubahan_Persen",
+            ascending=True
+        )
+
+    else:
+
+        comp = comp.sort_values("Province")
+
+    # TABLE DATA
+    table = comp[
+        [
+            "Province",
+            "current_price",
+            "Pred_Harga_H30",
+            "Perubahan_Persen",
+            "Pred_Kelas_H30",
+        ]
+    ].rename(
+        columns={
+            "Province": "Provinsi",
+            "current_price": "Harga terakhir",
+            "Pred_Harga_H30": "Prediksi H+30",
+            "Perubahan_Persen": "Perubahan (%)",
+            "Pred_Kelas_H30": "Klasifikasi",
+        }
+    )
+
+    st.markdown(f"### {commodity}")
+
+    st.caption(
+        f"{len(comp)} seri provinsi tersedia untuk komoditas ini."
+    )
+
+    # GROUPED BAR CHART
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Bar(
+            x=comp["Province"],
+            y=comp["current_price"],
+            name="Harga terakhir",
+            marker_color="#F6C445",
+        )
+    )
+
+    fig.add_trace(
+        go.Bar(
+            x=comp["Province"],
+            y=comp["Pred_Harga_H30"],
+            name="Prediksi H+30",
+            marker_color="#F05A28",
+        )
+    )
+
+    fig.update_layout(
+        barmode="group",
+        height=460,
+        margin=dict(
+            l=10,
+            r=10,
+            t=45,
+            b=10
+        ),
+        xaxis_title=None,
+        yaxis_title="Nilai harga (satuan dataset)",
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            x=0
+        ),
+    )
+
+    style_plotly(fig, 460)
+
+    add_grouped_bar_replay(
+        fig,
+        comp["Province"],
+        comp["current_price"],
+        comp["Pred_Harga_H30"],
+    )
+
+    st.plotly_chart(
+        fig,
+        use_container_width=True
+    )
+
+    # TABLE DISPLAY
+    st.markdown("### Tabel hasil")
+
+    display_table = table.round(
+        {
+            "Harga terakhir": 1,
+            "Prediksi H+30": 1,
+            "Perubahan (%)": 2
+        }
+    ).copy()
+
+    display_table["Harga terakhir"] = (
+        display_table["Harga terakhir"]
+        .map(lambda v: format_number(v, 1))
+    )
+
+    display_table["Prediksi H+30"] = (
+        display_table["Prediksi H+30"]
+        .map(lambda v: format_number(v, 1))
+    )
+
+    display_table["Perubahan (%)"] = (
+        display_table["Perubahan (%)"]
+        .map(lambda v: f"{v:+.2f}%")
+    )
+
+    render_html_table(display_table)
+
+    # DOWNLOAD CSV
+    csv_data = comp.to_csv(
+        index=False
+    ).encode("utf-8-sig")
+
+    st.download_button(
+        "⬇️ Unduh hasil perbandingan (CSV)",
+        data=csv_data,
+        file_name=(
+            f"panganpulse_"
+            f"{commodity.lower().replace(' ', '_')}_h30.csv"
+        ),
+        mime="text/csv",
+    )
+
+
+# ============================================================
+# ABOUT MODEL PAGE
+# ============================================================
+
+elif page == "Tentang Model":
+
+    render_header(
+        "Tentang Model dan Penelitian",
+        "Informasi algoritma, metrik evaluasi, cakupan data, "
+        "dan keterbatasan model yang digunakan.",
+    )
+
+    show_historical_warning(metadata)
+
+    reg = metadata["regression"]
+    cls = metadata["classification"]
+    scope = metadata["scope"]
+
+    # REGRESSION MODEL
+    st.markdown("### Model regresi")
+
+    st.subheader(reg["candidate"])
+
+    st.write(
+        f"Model dipilih berdasarkan **{reg['selection_rule']}**."
+    )
+
+    r1, r2, r3 = st.columns(3)
+
+    r1.metric(
+        "Mean MAE",
+        format_number(
+            reg["validation_metrics"]["Mean_MAE"],
+            2
+        )
+    )
+
+    r2.metric(
+        "Mean RMSE",
+        format_number(
+            reg["validation_metrics"]["Mean_RMSE"],
+            2
+        )
+    )
+
+    r3.metric(
+        "Mean MAPE",
+        f"{reg['validation_metrics']['Mean_MAPE']:.2f}%"
+    )
+
+    # CLASSIFICATION MODEL
+    st.markdown("### Model klasifikasi")
+
+    st.subheader(cls["candidate"])
+
+    st.write(
+        f"Model dipilih berdasarkan **{cls['selection_rule']}**."
+    )
+
+    c1, c2, c3 = st.columns(3)
+
+    c1.metric(
+        "Accuracy",
+        f"{cls['validation_metrics']['Mean_Accuracy']:.4f}"
+    )
+
+    c2.metric(
+        "Macro F1",
+        f"{cls['validation_metrics']['Mean_Macro_F1']:.4f}"
+    )
+
+    c3.metric(
+        "Balanced Accuracy",
+        f"{cls['validation_metrics']['Mean_Balanced_Accuracy']:.4f}"
+    )
+
+    st.caption(
+        "Classifier final menggunakan fitur historis Skenario A. "
+        "Faktor eksternal ditampilkan pada halaman prediksi sebagai "
+        "konteks interpretasi, bukan sebagai penyebab yang telah "
+        "dibuktikan atau input classifier final."
+    )
+
+    # RESEARCH SCOPE
+    st.markdown("### Cakupan penelitian")
+
+    a, b, c = st.columns(3)
+
+    a.metric(
+        "Komoditas",
+        len(scope["commodities"])
+    )
+
+    b.metric(
+        "Provinsi",
+        int(eligible["Province"].nunique())
+    )
+
+    c.metric(
+        "Seri eligible",
+        int(scope["n_eligible_series"])
+    )
+
+    st.write("**Komoditas yang dianalisis:**")
+
+    st.write(
+        ", ".join(scope["commodities"])
+    )
+
+    # FEATURES
+    with st.expander("Lihat fitur yang digunakan"):
+
+        st.write("**Fitur regresi:**")
+
+        st.code(
+            ", ".join(reg["features"])
+        )
+
+        st.write("**Fitur klasifikasi:**")
+
+        st.code(
+            ", ".join(cls["features"])
+        )
+
+    # MODEL CONFIGURATION
+    with st.expander("Lihat konfigurasi model"):
+
+        st.write("**Konfigurasi regresi:**")
+
+        st.json(reg["params"])
+
+        st.write("**Konfigurasi klasifikasi:**")
+
+        st.json(cls["params"])
+
+    # EVALUATION METHODOLOGY
+    st.markdown("### Metodologi evaluasi")
+
+    validation = metadata["validation_design"]
+
+    st.write(
+        f"Evaluasi menggunakan **{validation['folds'].__len__()} fold "
+        "expanding rolling-origin**. "
+        "Periode validasi berlangsung Januari–Mei 2024."
+    )
+
+    st.write(
+        f"Jumlah baris training final: "
+        f"**{metadata['training_data']['rows']:,}**."
+    )
+
+    # LIMITATIONS
+    st.markdown("### Keterbatasan")
+
+    for limitation in metadata.get("limitations", []):
+
+        st.markdown(f"- {limitation}")
+
+    st.info(
+        "Angka performa di atas merupakan hasil validasi "
+        "rolling-origin yang juga digunakan selama proses "
+        "pemilihan model. Angka tersebut bukan hasil pengujian "
+        "pada holdout independen."
+    )
+
+
+# ============================================================
+# FOOTER
+# ============================================================
+
+st.divider()
+
+st.markdown(
+    """
+    <div class="footer-note">
+        PanganPulse ✦ Academic Machine Learning Project
+        · Prediksi historis H+30
+        · Sumber dan satuan mengikuti dataset penelitian.
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
