@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import json
@@ -14,10 +15,7 @@ import streamlit as st
 
 
 # ============================================================
-# PanganPulse — Food Price Forecasting Dashboard
-# Forecast horizon: H+30
-# Regression: LightGBM A
-# Classification: Logistic Regression
+# PANGANPULSE - FOOD PRICE FORECASTING DASHBOARD
 # ============================================================
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -33,12 +31,6 @@ st.set_page_config(
 
 # ============================================================
 # UI/UX STYLING
-# Color Palette:
-# Yellow : #F6C445
-# Orange : #F05A28
-# Green  : #8BC34A
-# Cream  : #FFF3D6
-# Brown  : #3B2F2F
 # ============================================================
 
 st.markdown(
@@ -105,7 +97,6 @@ st.markdown(
         padding-top: 1.4rem;
         padding-bottom: 2.8rem;
     }
-
 
     /* SIDEBAR */
 
@@ -222,7 +213,6 @@ st.markdown(
         color: var(--pp-yellow) !important;
     }
 
-
     /* HEADER AND HERO */
 
     .page-heading {
@@ -317,7 +307,6 @@ st.markdown(
         font-weight: 700;
     }
 
-
     /* METRICS AND CARDS */
 
     div[data-testid="stMetric"] {
@@ -399,7 +388,6 @@ st.markdown(
         margin: 0 0 .8rem;
     }
 
-
     /* INPUTS, TABS, BUTTONS */
 
     [data-testid="stSelectbox"] label,
@@ -463,14 +451,19 @@ st.markdown(
         box-shadow: 0 0 0 3px rgba(240,90,40,.18);
     }
 
-
     /* ALERTS AND EXPANDERS */
 
     [data-testid="stAlert"] {
         border-radius: 15px;
-        border: 1px solid rgba(246,196,69,.35);
-        background: rgba(255,248,225,.9);
-        color: var(--pp-brown);
+        border: 1px solid rgba(240,90,40,.22) !important;
+        background: #FFF5DE !important;
+        color: #3B2F2F !important;
+    }
+
+    [data-testid="stAlert"] p,
+    [data-testid="stAlert"] span,
+    [data-testid="stAlert"] div {
+        color: #3B2F2F !important;
     }
 
     [data-testid="stExpander"] {
@@ -484,8 +477,7 @@ st.markdown(
         font-weight: 600;
     }
 
-
-    /* INTERACTIVE HTML TABLE */
+    /* INTERACTIVE TABLE */
 
     .pp-table-wrap {
         width: 100%;
@@ -559,9 +551,6 @@ st.markdown(
         box-shadow: 0 7px 20px rgba(82,54,31,.05);
     }
 
-
-    /* SMALL DETAILS */
-
     .small-muted {
         color: var(--pp-muted);
         font-size: .8rem;
@@ -573,7 +562,6 @@ st.markdown(
         text-align: center;
         padding: .6rem 0 .2rem;
     }
-
 
     /* ANIMATIONS */
 
@@ -596,7 +584,6 @@ st.markdown(
             box-shadow: 0 0 0 7px rgba(240,90,40,.08);
         }
     }
-
 
     /* RESPONSIVE */
 
@@ -629,7 +616,6 @@ st.markdown(
             scroll-behavior: auto !important;
         }
     }
-
     </style>
     """,
     unsafe_allow_html=True,
@@ -668,7 +654,9 @@ def get_class_label(value, labels: dict) -> str:
         key = str(value)
 
     return labels.get(key, f"Kelas {key}")
-    # ============================================================
+
+
+# ============================================================
 # LOAD DATA AND MODELS
 # ============================================================
 
@@ -754,7 +742,6 @@ def load_assets():
         validate="many_to_one",
     )
 
-    # Mengikuti urutan fitur pada metadata model.
     reg_features = metadata["regression"]["features"]
     cls_features = metadata["classification"]["features"]
 
@@ -774,7 +761,6 @@ def load_assets():
                 f"{missing_columns}"
             )
 
-    # Validasi satu record untuk setiap pasangan komoditas-provinsi.
     key_cols = ["Commodity", "Province"]
 
     if latest_features.duplicated(key_cols).any():
@@ -783,11 +769,9 @@ def load_assets():
             "komoditas-provinsi duplikat."
         )
 
-    # Input model.
     reg_input = latest_features[reg_features].copy()
     cls_input = latest_features[cls_features].copy()
 
-    # Prediksi.
     predicted_price = regression_model.predict(reg_input)
     predicted_class = classification_model.predict(cls_input)
 
@@ -836,7 +820,6 @@ def load_assets():
         np.nan,
     )
 
-    # Probabilitas klasifikasi jika tersedia.
     if hasattr(classification_model, "predict_proba"):
 
         probabilities = classification_model.predict_proba(
@@ -955,9 +938,6 @@ def make_history_chart(
     last_price = float(forecast_row["current_price"])
     predicted_price = float(forecast_row["Pred_Harga_H30"])
 
-    # Garis penghubung hanya menghubungkan harga terakhir
-    # dengan titik target H+30.
-    # Bukan prediksi harga harian.
     fig.add_trace(
         go.Scatter(
             x=[last_date, target_date],
@@ -1218,10 +1198,6 @@ def build_external_factor_explanation(
             }
         )
 
-    # --------------------------------------------------------
-    # Ringkasan interpretasi berdasarkan klasifikasi
-    # --------------------------------------------------------
-
     if predicted_class == "Naik":
 
         if upward_pressure > downward_pressure:
@@ -1289,10 +1265,6 @@ def build_external_factor_explanation(
             "konsisten untuk menjelaskan perubahan harga."
         )
 
-    # --------------------------------------------------------
-    # Keterbatasan interpretasi per komoditas
-    # --------------------------------------------------------
-
     if commodity == "Cabai Rawit Merah":
 
         limitation = (
@@ -1325,11 +1297,27 @@ def build_external_factor_explanation(
         summary,
         limitation
     )
-    # ============================================================
-# UI COMPONENTS
+
+
+# ============================================================
+# HTML RENDERING FIX
 # ============================================================
 
+def render_html_block(content: str):
+
+    cleaned_html = "\n".join(
+        line.lstrip()
+        for line in content.splitlines()
+    ).strip()
+
+    st.markdown(
+        cleaned_html,
+        unsafe_allow_html=True
+    )
+
+
 def render_header(title: str, subtitle: str):
+
     render_page_heading(title, subtitle)
 
 
@@ -1341,21 +1329,15 @@ def render_page_heading(
 
     safe_title = html_lib.escape(title)
     safe_subtitle = html_lib.escape(subtitle)
+    safe_eyebrow = html_lib.escape(eyebrow)
 
-    st.markdown(
-        f"""
+    render_html_block(f"""
         <div class="page-heading">
-            <span class="page-eyebrow">
-                ✦ {html_lib.escape(eyebrow)}
-            </span>
-
+            <span class="page-eyebrow">✦ {safe_eyebrow}</span>
             <h1>{safe_title}</h1>
-
             <p>{safe_subtitle}</p>
         </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    """)
 
 
 # ============================================================
@@ -1816,27 +1798,18 @@ except Exception as exc:
 
 with st.sidebar:
 
-    st.markdown(
-        """
+    render_html_block("""
         <div class="brand-wrap">
-
-            <div class="brand-mark">
-                🌾
-            </div>
-
+            <div class="brand-mark">🌾</div>
             <div class="brand">
                 Pangan<span class="pulse">Pulse</span>
             </div>
-
             <div class="brand-sub">
-                PEMANTAUAN & PREDIKSI<br>
+                PEMANTAUAN &amp; PREDIKSI<br>
                 HARGA PANGAN NASIONAL
             </div>
-
         </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    """)
 
     st.markdown("**MENU UTAMA**")
 
@@ -1868,26 +1841,13 @@ with st.sidebar:
 
     st.markdown("**RUANG LINGKUP**")
 
-    st.markdown(
-        f"""
+    render_html_block(f"""
         <div class="sidebar-note">
-
-            <div>
-                🌱 <strong>3 komoditas</strong>
-            </div>
-
-            <div>
-                🗺️ <strong>{int(eligible['Province'].nunique())} provinsi</strong>
-            </div>
-
-            <div>
-                📊 <strong>{len(predictions)} seri data</strong>
-            </div>
-
+            <div>🌱 <strong>3 komoditas</strong></div>
+            <div>🗺️ <strong>{int(eligible['Province'].nunique())} provinsi</strong></div>
+            <div>📊 <strong>{len(predictions)} seri data</strong></div>
         </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    """)
 
     st.markdown("**PERIODE DATA**")
 
@@ -1898,14 +1858,15 @@ with st.sidebar:
     st.caption(
         "Academic project · Machine Learning"
     )
-    # ============================================================
+
+
+# ============================================================
 # DASHBOARD PAGE
 # ============================================================
 
 if page == "Dashboard":
 
-    st.markdown(
-        """
+    render_html_block("""
         <div class="hero">
 
             <div class="hero-kicker">
@@ -1927,9 +1888,7 @@ if page == "Dashboard":
             </div>
 
         </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    """)
 
     show_historical_warning(metadata)
 
@@ -1941,11 +1900,6 @@ if page == "Dashboard":
         eligible["Commodity"].nunique()
     )
 
-    last_date = pd.Timestamp(
-        metadata["latest_data_date"]
-    )
-
-    # KPI CARDS
     c1, c2, c3, c4 = st.columns(4)
 
     c1.metric(
@@ -1968,24 +1922,13 @@ if page == "Dashboard":
         f"H+{metadata['horizon_days']}"
     )
 
-    # HISTORICAL PRICE OVERVIEW
-    st.markdown(
-        """
-        <div class="section-kicker">
-            Market overview
-        </div>
-
-        <div class="section-title">
-            Gambaran harga historis
-        </div>
-
+    render_html_block("""
+        <div class="section-kicker">Market overview</div>
+        <div class="section-title">Gambaran harga historis</div>
         <div class="section-subtitle">
-            Pilih komoditas untuk melihat pergerakan
-            median harga antarprovinsi.
+            Pilih komoditas untuk melihat pergerakan median harga antarprovinsi.
         </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    """)
 
     commodity_options = sorted(
         predictions["Commodity"].unique().tolist()
@@ -2062,40 +2005,19 @@ if page == "Dashboard":
         use_container_width=True
     )
 
-    # FORECAST SUMMARY
-    st.markdown(
-        """
-        <div class="section-kicker">
-            Forecast snapshot
-        </div>
-
-        <div class="section-title">
-            Ringkasan prediksi H+30
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    render_html_block("""
+        <div class="section-kicker">Forecast snapshot</div>
+        <div class="section-title">Ringkasan prediksi H+30</div>
+    """)
 
     summary = (
         predictions
         .groupby("Commodity")
         .agg(
             Seri_tersedia=("Province", "nunique"),
-
-            Median_harga_terakhir=(
-                "current_price",
-                "median"
-            ),
-
-            Median_prediksi_H30=(
-                "Pred_Harga_H30",
-                "median"
-            ),
-
-            Median_perubahan_persen=(
-                "Perubahan_Persen",
-                "median"
-            ),
+            Median_harga_terakhir=("current_price", "median"),
+            Median_prediksi_H30=("Pred_Harga_H30", "median"),
+            Median_perubahan_persen=("Perubahan_Persen", "median"),
         )
         .reset_index()
     )
@@ -2198,19 +2120,10 @@ elif page == "Prediksi H+30":
 
         st.stop()
 
-    # PREDICTION RESULT
-    st.markdown(
-        """
-        <div class="section-kicker">
-            Prediction result
-        </div>
-
-        <div class="section-title">
-            Hasil prediksi
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    render_html_block("""
+        <div class="section-kicker">Prediction result</div>
+        <div class="section-title">Hasil prediksi</div>
+    """)
 
     m1, m2, m3 = st.columns(3)
 
@@ -2247,7 +2160,6 @@ elif page == "Prediksi H+30":
         f"Tanggal target: **{format_date(row['TargetDate'])}**"
     )
 
-    # HISTORICAL CHART
     st.markdown(
         "### Grafik harga historis dan titik prediksi"
     )
@@ -2263,7 +2175,6 @@ elif page == "Prediksi H+30":
         "harga harian di antara kedua tanggal."
     )
 
-    # CLASSIFICATION PROBABILITY
     probability_cols = [
         col for col in predictions.columns
         if col.startswith("Prob_")
@@ -2335,19 +2246,10 @@ elif page == "Prediksi H+30":
             use_container_width=True
         )
 
-    # EXTERNAL FACTOR EXPLANATION
-    st.markdown(
-        """
-        <div class="section-kicker">
-            Market context
-        </div>
-
-        <div class="section-title">
-            Konteks faktor eksternal
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    render_html_block("""
+        <div class="section-kicker">Market context</div>
+        <div class="section-title">Konteks faktor eksternal</div>
+    """)
 
     factor_table, factor_summary, factor_limitation = (
         build_external_factor_explanation(
@@ -2372,7 +2274,6 @@ elif page == "Prediksi H+30":
 
     st.caption(factor_limitation)
 
-    # DETAIL DATA
     with st.expander("Lihat detail data seri"):
 
         series_history = history[
@@ -2468,7 +2369,6 @@ elif page == "Perbandingan Provinsi":
 
         comp = comp.sort_values("Province")
 
-    # TABLE DATA
     table = comp[
         [
             "Province",
@@ -2493,7 +2393,6 @@ elif page == "Perbandingan Provinsi":
         f"{len(comp)} seri provinsi tersedia untuk komoditas ini."
     )
 
-    # GROUPED BAR CHART
     fig = go.Figure()
 
     fig.add_trace(
@@ -2547,7 +2446,6 @@ elif page == "Perbandingan Provinsi":
         use_container_width=True
     )
 
-    # TABLE DISPLAY
     st.markdown("### Tabel hasil")
 
     display_table = table.round(
@@ -2575,7 +2473,6 @@ elif page == "Perbandingan Provinsi":
 
     render_html_table(display_table)
 
-    # DOWNLOAD CSV
     csv_data = comp.to_csv(
         index=False
     ).encode("utf-8-sig")
@@ -2732,7 +2629,7 @@ elif page == "Tentang Model":
     validation = metadata["validation_design"]
 
     st.write(
-        f"Evaluasi menggunakan **{validation['folds'].__len__()} fold "
+        f"Evaluasi menggunakan **{len(validation['folds'])} fold "
         "expanding rolling-origin**. "
         "Periode validasi berlangsung Januari–Mei 2024."
     )
@@ -2763,13 +2660,10 @@ elif page == "Tentang Model":
 
 st.divider()
 
-st.markdown(
-    """
+render_html_block("""
     <div class="footer-note">
         PanganPulse ✦ Academic Machine Learning Project
         · Prediksi historis H+30
         · Sumber dan satuan mengikuti dataset penelitian.
     </div>
-    """,
-    unsafe_allow_html=True,
-)
+""")
