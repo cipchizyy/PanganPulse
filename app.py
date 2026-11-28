@@ -1352,20 +1352,18 @@ with st.sidebar:
 
 
 # ---------- Indonesia province map helpers ----------
-INDONESIA_PROVINCE_GEOJSON_URL = (
-    "https://raw.githubusercontent.com/arsofyan7/Indonesia-GeoJSON/"
-    "master/indonesia-province.geojson"
+# GeoJSON ini memakai koordinat WGS84 (longitude, latitude) dan
+# geometri provinsi yang disederhanakan agar peta ringan dirender.
+INDONESIA_PROVINCE_GEOJSON_URLS = (
+    "https://raw.githubusercontent.com/stoikal/indonesia-geodata/"
+    "main/json/indonesiaLow.json",
+    "https://cdn.jsdelivr.net/gh/stoikal/indonesia-geodata@main/"
+    "json/indonesiaLow.json",
 )
-
-PROVINCE_TO_GEOJSON = {
-    "DKI Jakarta": "Jakarta Raya",
-    "DI Yogyakarta": "Yogyakarta",
-    "Kepulauan Bangka Belitung": "Bangka Belitung",
-}
 
 STATUS_COLORS = {
     "Turun": "#F6C445",       # kuning
-    "Naik": "#E74C3C",        # merah untuk prediksi naik
+    "Naik": "#E74C3C",        # merah
     "Stabil": "#8BC34A",      # hijau
     "Tidak tersedia": "#D8D2C8",
 }
@@ -1377,33 +1375,118 @@ STATUS_CODES = {
     "Tidak tersedia": 3,
 }
 
+# Nama pada GeoJSON diselaraskan dengan nama provinsi di dataset penelitian.
+# Data penelitian memakai pembagian 34 provinsi, sedangkan GeoJSON ini
+# memakai pembagian 38 provinsi. Provinsi hasil pemekaran Papua mengikuti
+# status provinsi induk pada dataset 34 provinsi.
+GEOJSON_TO_DATA_PROVINCE = {
+    "Jakarta Raya": "DKI Jakarta",
+    "Yogyakarta": "DI Yogyakarta",
+    "Papua Pegunungan": "Papua",
+    "Papua Selatan": "Papua",
+    "Papua Tengah": "Papua",
+    "Papua Barat Daya": "Papua Barat",
+}
+
+GEOJSON_DISPLAY_NAMES = {
+    "Jakarta Raya": "DKI Jakarta",
+    "Yogyakarta": "DI Yogyakarta",
+}
+
 
 @st.cache_data(ttl=86400, show_spinner="Memuat batas wilayah provinsi Indonesia...")
 def load_indonesia_province_geojson():
-    """Load simplified 34-province boundaries used by the study dataset."""
+    """Load simplified Indonesia province GeoJSON in WGS84 coordinates."""
     local_candidates = [
-        BASE_DIR / "indonesia-province.geojson",
-        BASE_DIR / "assets" / "indonesia-province.geojson",
+        BASE_DIR / "indonesiaLow.json",
+        BASE_DIR / "assets" / "indonesiaLow.json",
     ]
 
+    geojson = None
     for local_path in local_candidates:
         if local_path.exists():
             with local_path.open("r", encoding="utf-8") as file:
                 geojson = json.load(file)
             break
-    else:
-        request = Request(
-            INDONESIA_PROVINCE_GEOJSON_URL,
-            headers={"User-Agent": "PanganPulse/1.0"},
-        )
-        with urlopen(request, timeout=25) as response:
-            geojson = json.loads(response.read().decode("utf-8"))
+
+    if geojson is None:
+        download_errors = []
+        for geojson_url in INDONESIA_PROVINCE_GEOJSON_URLS:
+            try:
+                request = Request(
+                    geojson_url,
+                    headers={"User-Agent": "PanganPulse/1.0"},
+                )
+                with urlopen(request, timeout=30) as response:
+                    geojson = json.loads(response.read().decode("utf-8"))
+                break
+            except Exception as exc:
+                download_errors.append(f"{geojson_url}: {exc}")
+
+        if geojson is None:
+            raise RuntimeError(
+                "Tidak dapat mengunduh GeoJSON dari sumber utama maupun CDN. "
+                + " | ".join(download_errors)
+            )
 
     if geojson.get("type") != "FeatureCollection":
         raise ValueError("Format GeoJSON batas provinsi tidak valid.")
 
-    if not geojson.get("features"):
-        raise ValueError("GeoJSON tidak berisi geometri provinsi.")
+    features = geojson.get("features", [])
+    if len(features) < 30:
+        raise ValueError(
+            f"GeoJSON hanya memuat {len(features)} fitur; "
+            "batas provinsi Indonesia tidak lengkap."
+        )
+
+    # Pastikan properti nama dan koordinat benar-benar tersedia.
+    for feature in features:
+        properties = feature.get("properties") or {}
+        if not properties.get("name"):
+            raise ValueError(
+                "Properti 'name' tidak ditemukan pada salah satu fitur GeoJSON."
+            )
+        if not feature.get("geometry"):
+            raise ValueError("Ada fitur GeoJSON tanpa geometri.")
+
+    # Cek koordinat WGS84 secara rekursif. Ini mencegah file berproyeksi
+    # meter (misalnya EPSG:3857) dibaca seolah-olah longitude/latitude.
+    def walk_coordinates(value):
+        if (
+            isinstance(value, (list, tuple))
+            and len(value) >= 2
+            and isinstance(value[0], (int, float))
+            and isinstance(value[1], (int, float))
+        ):
+            yield float(value[0]), float(value[1])
+        elif isinstance(value, (list, tuple)):
+            for child in value:
+                yield from walk_coordinates(child)
+
+    sample = []
+    for feature in features:
+        coords = feature["geometry"].get("coordinates", [])
+        for point in walk_coordinates(coords):
+            sample.append(point)
+            if len(sample) >= 500:
+                break
+        if len(sample) >= 500:
+            break
+
+    if not sample:
+        raise ValueError("Koordinat GeoJSON tidak dapat dibaca.")
+
+    lon_values = [point[0] for point in sample]
+    lat_values = [point[1] for point in sample]
+
+    if (
+        min(lon_values) < 90 or max(lon_values) > 150
+        or min(lat_values) < -15 or max(lat_values) > 12
+    ):
+        raise ValueError(
+            "Koordinat GeoJSON bukan rentang WGS84 Indonesia. "
+            "Periksa sumber atau sistem koordinat GeoJSON."
+        )
 
     return geojson
 
@@ -1423,44 +1506,41 @@ def normalize_prediction_status(value) -> str:
 
 
 def build_province_status_map(geojson: dict, commodity_data: pd.DataFrame):
-    """Create a simple Indonesia choropleth with province + status hover only."""
-    status_by_geo_name = {}
-    original_province_by_geo_name = {}
+    """Build a province choropleth with hover limited to name and status."""
+    status_by_data_province = {}
 
     for _, row in commodity_data.iterrows():
         province_name = str(row["Province"]).strip()
-        geo_name = PROVINCE_TO_GEOJSON.get(province_name, province_name)
-
-        status_by_geo_name[geo_name] = normalize_prediction_status(
+        status_by_data_province[province_name] = normalize_prediction_status(
             row["Pred_Kelas_H30"]
         )
-        original_province_by_geo_name[geo_name] = province_name
 
     map_locations = []
     map_status_codes = []
     map_customdata = []
 
     for feature in geojson["features"]:
-        geo_name = feature.get("properties", {}).get("NAME_1")
+        geo_name = str(feature.get("properties", {}).get("name", "")).strip()
         if not geo_name:
             continue
 
-        status = status_by_geo_name.get(geo_name, "Tidak tersedia")
-        province_label = original_province_by_geo_name.get(geo_name, geo_name)
+        data_province = GEOJSON_TO_DATA_PROVINCE.get(geo_name, geo_name)
+        status = status_by_data_province.get(
+            data_province,
+            "Tidak tersedia",
+        )
+        display_name = GEOJSON_DISPLAY_NAMES.get(geo_name, geo_name)
 
         map_locations.append(geo_name)
         map_status_codes.append(STATUS_CODES[status])
-        map_customdata.append([province_label, status])
+        map_customdata.append([display_name, status, data_province])
 
-    if not map_locations:
+    if len(map_locations) < 30:
         raise ValueError(
-            "Nama provinsi pada GeoJSON tidak dapat dibaca. "
-            "Pastikan properti NAME_1 tersedia."
+            f"Hanya {len(map_locations)} provinsi yang berhasil dipetakan."
         )
 
-    customdata = np.asarray(map_customdata, dtype=object)
-
-    # Discrete color bands: 0=Turun, 1=Naik, 2=Stabil, 3=Tidak tersedia.
+    # Batas warna dibuat diskrit agar tiap kelas selalu memakai satu warna.
     colorscale = [
         [0.0000, STATUS_COLORS["Turun"]],
         [0.1666, STATUS_COLORS["Turun"]],
@@ -1475,7 +1555,7 @@ def build_province_status_map(geojson: dict, commodity_data: pd.DataFrame):
     fig = go.Figure(
         go.Choropleth(
             geojson=geojson,
-            featureidkey="properties.NAME_1",
+            featureidkey="properties.name",
             locations=map_locations,
             z=map_status_codes,
             zmin=0,
@@ -1485,13 +1565,13 @@ def build_province_status_map(geojson: dict, commodity_data: pd.DataFrame):
             marker=dict(
                 line=dict(
                     color="#FFF9EC",
-                    width=0.85,
+                    width=0.8,
                 )
             ),
-            customdata=customdata,
+            customdata=np.asarray(map_customdata, dtype=object),
             hovertemplate=(
                 "<b>%{customdata[0]}</b><br>"
-                "Status prediksi: %{customdata[1]}"
+                "Status prediksi: <b>%{customdata[1]}</b>"
                 "<extra></extra>"
             ),
             name="Status prediksi",
@@ -1507,11 +1587,13 @@ def build_province_status_map(geojson: dict, commodity_data: pd.DataFrame):
         showcountries=False,
         showcoastlines=False,
         showland=False,
+        domain=dict(x=[0.02, 0.98], y=[0.02, 0.98]),
     )
 
     fig.update_layout(
-        height=570,
-        margin=dict(l=5, r=5, t=8, b=5),
+        height=590,
+        autosize=True,
+        margin=dict(l=5, r=5, t=5, b=5),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         hoverlabel=dict(
@@ -1524,6 +1606,7 @@ def build_province_status_map(geojson: dict, commodity_data: pd.DataFrame):
             ),
         ),
         dragmode=False,
+        uirevision="panganpulse-indonesia-province-map",
     )
 
     return fig, map_customdata
@@ -1870,8 +1953,10 @@ elif page == "Perbandingan Provinsi":
     st.caption(
         "Warna menunjukkan hasil klasifikasi prediksi H+30: "
         "kuning = turun, merah = naik, dan hijau = stabil. "
-        "Peta mengikuti cakupan 34 provinsi pada dataset penelitian. "
-        "Sumber batas wilayah: arsofyan7/Indonesia-GeoJSON."
+        "Batas peta menggunakan pembagian provinsi terbaru (38 wilayah). "
+        "Karena dataset penelitian menggunakan 34 provinsi, wilayah hasil "
+        "pemekaran Papua mengikuti status provinsi induknya. "
+        "Sumber geometri: stoikal/indonesia-geodata (indonesiaLow)."
     )
 
 
